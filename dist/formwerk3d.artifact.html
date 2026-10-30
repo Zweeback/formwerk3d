@@ -1217,6 +1217,8 @@ E.neighbors = function () {
   }
   return (E.nb = nb);
 };
+E.selKeys = function () { const pos = E.obj.geometry.attributes.position, s = new Set(), key = F.meshops.key; E.sel.forEach(i => { const k = E.groups[i].idx[0]; s.add(key(pos.getX(k), pos.getY(k), pos.getZ(k))); }); return s; };
+E.selectKeys = function (keys) { const pos = E.obj.geometry.attributes.position, key = F.meshops.key; E.sel.clear(); E.groups.forEach((g, i) => { const k = g.idx[0]; if (keys.has(key(pos.getX(k), pos.getY(k), pos.getZ(k)))) E.sel.add(i); }); E.colorPts(); };
 E.selectAll = () => { for (let i = 0; i < E.groups.length; i++) E.sel.add(i); E.colorPts(); };
 E.selectNone = () => { E.sel.clear(); E.colorPts(); };
 E.invert = () => { const n = new Set(); for (let i = 0; i < E.groups.length; i++) if (!E.sel.has(i)) n.add(i); E.sel = n; E.colorPts(); };
@@ -1331,7 +1333,7 @@ const FALL = { smooth: t => (1 - t * t) * (1 - t * t), linear: t => 1 - t, sharp
 K.ready = function (obj) {
   if (!obj || !obj.isMesh || obj.isSkinnedMesh) { F.say('Bitte ein normales Mesh auswählen', 'err'); return false; }
   K.obj = obj;
-  if (!obj.userData.sculpt) {
+  if (!obj.userData.sculpt || !obj.geometry.index) { /* auch nach Rückgängig (Geometrie wieder unverschweißt) neu vorbereiten */
     const g = G.weld(obj.geometry, false); obj.userData.sculpt = true; V.setGeometry(obj, g, 'Für Skulptur vorbereiten', 'mesh', null);
     F.say('Mesh für Skulptur vorbereitet (Punkte verschweißt, UVs entfernt)');
   }
@@ -1464,6 +1466,306 @@ V.updateLabels = function () {
   l.hidden = false; l.textContent = fix(M.dist, 3) + ' m';
   l.style.left = ((mid.x * 0.5 + 0.5) * r.width) + 'px'; l.style.top = ((-mid.y * 0.5 + 0.5) * r.height) + 'px';
 };
+
+// ---- 41-meshops.js ----
+/* ============================================================
+   Mesh-Operationen auf Flächen: Extrudieren, Einsetzen, Fase, Löschen,
+   Abtrennen, Verschmelzen, Kantenschleife, Verschieben/Skalieren mit
+   weichem Abfall, Auswahl per Regel (für Oberfläche und KI-Befehle)
+   Alle Funktionen arbeiten auf einer Dreiecksliste (nicht indiziert) und
+   liefern neue Geometrie mit nach Winkel geglätteten Normalen zurück.
+   ============================================================ */
+F.meshops = (function () {
+  const M = {}, Q = 1e5;
+  const key = (x, y, z) => Math.round(x * Q) + ',' + Math.round(y * Q) + ',' + Math.round(z * Q);
+  M.key = key;
+
+  /* ---------- Aufbereitung ---------- */
+  M.topo = function (geo) {
+    const pos = geo.attributes.position, uv = geo.attributes.uv, idx = geo.index;
+    const cnt = idx ? idx.count : pos.count, n = Math.floor(cnt / 3);
+    const P = new Float32Array(n * 9), U = new Float32Array(n * 6), cg = new Int32Array(n * 3), map = new Map(), gp = [], keys = [];
+    for (let t = 0; t < n; t++) for (let k = 0; k < 3; k++) {
+      const c = t * 3 + k, v = idx ? idx.getX(c) : c, x = pos.getX(v), y = pos.getY(v), z = pos.getZ(v);
+      P[c * 3] = x; P[c * 3 + 1] = y; P[c * 3 + 2] = z;
+      if (uv) { U[c * 2] = uv.getX(v); U[c * 2 + 1] = uv.getY(v); }
+      const kk = key(x, y, z); let g = map.get(kk);
+      if (g === undefined) { g = keys.length; map.set(kk, g); keys.push(kk); gp.push(x, y, z); }
+      cg[c] = g;
+    }
+    return { n, P, U, cg, ng: keys.length, gp: Float32Array.from(gp), keys, map };
+  };
+  /* Flächennormalen (Länge = doppelte Fläche) */
+  function faceN(P, n) {
+    const N = new Float32Array(n * 3);
+    for (let t = 0; t < n; t++) {
+      const o = t * 9, ax = P[o + 3] - P[o], ay = P[o + 4] - P[o + 1], az = P[o + 5] - P[o + 2], bx = P[o + 6] - P[o], by = P[o + 7] - P[o + 1], bz = P[o + 8] - P[o + 2];
+      N[t * 3] = ay * bz - az * by; N[t * 3 + 1] = az * bx - ax * bz; N[t * 3 + 2] = ax * by - ay * bx;
+    }
+    return N;
+  }
+  const len3 = (x, y, z) => Math.sqrt(x * x + y * y + z * z);
+  /* Geometrie aus Dreiecksliste: Nulldreiecke entfernen, Normalen nach Winkel glätten */
+  function build(P, U, n, ang) {
+    const N0 = faceN(P, n), keep = [];
+    for (let t = 0; t < n; t++) if (len3(N0[t * 3], N0[t * 3 + 1], N0[t * 3 + 2]) > 1e-10) keep.push(t);
+    const m = keep.length, Pp = new Float32Array(m * 9), Uu = new Float32Array(m * 6), N = new Float32Array(m * 3);
+    keep.forEach((t, i) => { Pp.set(P.subarray(t * 9, t * 9 + 9), i * 9); Uu.set(U.subarray(t * 6, t * 6 + 6), i * 6); N.set(N0.subarray(t * 3, t * 3 + 3), i * 3); });
+    const un = new Float32Array(m * 3);
+    for (let t = 0; t < m; t++) { const l = len3(N[t * 3], N[t * 3 + 1], N[t * 3 + 2]) || 1; un[t * 3] = N[t * 3] / l; un[t * 3 + 1] = N[t * 3 + 1] / l; un[t * 3 + 2] = N[t * 3 + 2] / l; }
+    const cosA = Math.cos((ang === undefined ? 40 : ang) * Math.PI / 180), map = new Map(), lists = [], cg = new Int32Array(m * 3);
+    for (let c = 0; c < m * 3; c++) {
+      const kk = key(Pp[c * 3], Pp[c * 3 + 1], Pp[c * 3 + 2]); let g = map.get(kk);
+      if (g === undefined) { g = lists.length; map.set(kk, g); lists.push([]); }
+      lists[g].push((c / 3) | 0); cg[c] = g;
+    }
+    const NN = new Float32Array(m * 9);
+    for (let c = 0; c < m * 3; c++) {
+      const t = (c / 3) | 0, L = lists[cg[c]]; let sx = 0, sy = 0, sz = 0;
+      for (let i = 0; i < L.length; i++) {
+        const t2 = L[i], d = un[t * 3] * un[t2 * 3] + un[t * 3 + 1] * un[t2 * 3 + 1] + un[t * 3 + 2] * un[t2 * 3 + 2];
+        if (d >= cosA) { sx += N[t2 * 3]; sy += N[t2 * 3 + 1]; sz += N[t2 * 3 + 2]; }
+      }
+      const l = len3(sx, sy, sz);
+      if (l < 1e-12) { NN[c * 3] = un[t * 3]; NN[c * 3 + 1] = un[t * 3 + 1]; NN[c * 3 + 2] = un[t * 3 + 2]; } else { NN[c * 3] = sx / l; NN[c * 3 + 1] = sy / l; NN[c * 3 + 2] = sz / l; }
+    }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.BufferAttribute(Pp, 3)); g.setAttribute('normal', new THREE.BufferAttribute(NN, 3)); g.setAttribute('uv', new THREE.BufferAttribute(Uu, 2));
+    g.computeBoundingSphere(); g.computeBoundingBox(); return g;
+  }
+  M.build = build;
+  const join = (a, b) => { const r = new Float32Array(a.length + b.length); r.set(a); r.set(b, a.length); return r; };
+  const cnt = mask => { let c = 0; for (let i = 0; i < mask.length; i++) if (mask[i]) c++; return c; };
+  M.count = cnt;
+
+  /* ---------- Auswahl ---------- */
+  M.facesFromKeys = function (T, keySet, any) {
+    const mask = new Uint8Array(T.n);
+    for (let t = 0; t < T.n; t++) {
+      let hit = 0; for (let k = 0; k < 3; k++) if (keySet.has(T.keys[T.cg[t * 3 + k]])) hit++;
+      if (any ? hit > 0 : hit === 3) mask[t] = 1;
+    }
+    return mask;
+  };
+  /* Auswahlregel (lokale Koordinaten): 'all' | { normal:[x,y,z], tol:Grad, box:[[min],[max]], axis:'y', min, max, rel:true }
+     Mehrere Angaben gelten zugleich. Die Fläche zählt, wenn ihr Mittelpunkt im Bereich liegt. */
+  M.select = function (T, spec) {
+    const mask = new Uint8Array(T.n);
+    if (spec === undefined || spec === null || spec === 'all' || spec === true) { mask.fill(1); return mask; }
+    const N = faceN(T.P, T.n), P = T.P;
+    let nx = 0, ny = 0, nz = 0, cosT = -2;
+    if (spec.normal) { const l = len3(spec.normal[0], spec.normal[1], spec.normal[2]) || 1; nx = spec.normal[0] / l; ny = spec.normal[1] / l; nz = spec.normal[2] / l; cosT = Math.cos((spec.tol === undefined ? 20 : +spec.tol) * Math.PI / 180); }
+    let bmin = [Infinity, Infinity, Infinity], bmax = [-Infinity, -Infinity, -Infinity];
+    for (let i = 0; i < T.ng; i++) for (let a = 0; a < 3; a++) { const v = T.gp[i * 3 + a]; if (v < bmin[a]) bmin[a] = v; if (v > bmax[a]) bmax[a] = v; }
+    const ax = spec.axis === undefined ? -1 : { x: 0, y: 1, z: 2 }[String(spec.axis).toLowerCase()];
+    if (ax === undefined) throw new Error('Achse x, y oder z');
+    let lo = spec.min, hi = spec.max;
+    if (ax >= 0 && spec.rel) { const r = bmax[ax] - bmin[ax]; lo = lo === undefined ? undefined : bmin[ax] + lo * r; hi = hi === undefined ? undefined : bmin[ax] + hi * r; }
+    let box = spec.box ? spec.box.map(v => v.slice()) : null;
+    if (box && spec.rel) for (let a = 0; a < 3; a++) { const r = bmax[a] - bmin[a]; box[0][a] = bmin[a] + box[0][a] * r; box[1][a] = bmin[a] + box[1][a] * r; }
+    const E = 1e-6;
+    for (let t = 0; t < T.n; t++) {
+      if (cosT > -2) { const l = len3(N[t * 3], N[t * 3 + 1], N[t * 3 + 2]); if (l < 1e-12) continue; if ((N[t * 3] * nx + N[t * 3 + 1] * ny + N[t * 3 + 2] * nz) / l < cosT) continue; }
+      const o = t * 9, cx = (P[o] + P[o + 3] + P[o + 6]) / 3, cy = (P[o + 1] + P[o + 4] + P[o + 7]) / 3, cz = (P[o + 2] + P[o + 5] + P[o + 8]) / 3;
+      if (ax >= 0) { const c = [cx, cy, cz][ax]; if (lo !== undefined && c < lo - E) continue; if (hi !== undefined && c > hi + E) continue; }
+      if (box && (cx < box[0][0] - E || cx > box[1][0] + E || cy < box[0][1] - E || cy > box[1][1] + E || cz < box[0][2] - E || cz > box[1][2] + E)) continue;
+      mask[t] = 1;
+    }
+    return mask;
+  };
+
+  /* ---------- Randkanten und Gruppennormalen ---------- */
+  function boundary(T, mask) {
+    const c = new Map(), out = [], ng = T.ng;
+    const ek = (a, b) => a < b ? a * ng + b : b * ng + a;
+    for (let t = 0; t < T.n; t++) if (mask[t]) for (let k = 0; k < 3; k++) { const e = ek(T.cg[t * 3 + k], T.cg[t * 3 + (k + 1) % 3]); c.set(e, (c.get(e) || 0) + 1); }
+    for (let t = 0; t < T.n; t++) if (mask[t]) for (let k = 0; k < 3; k++) {
+      const a = T.cg[t * 3 + k], b = T.cg[t * 3 + (k + 1) % 3];
+      if (c.get(ek(a, b)) === 1) out.push({ t, k, a, b });
+    }
+    return out;
+  }
+  function groupNormals(T, mask, N) {
+    const gn = new Float64Array(T.ng * 3), has = new Uint8Array(T.ng);
+    for (let t = 0; t < T.n; t++) if (mask[t]) for (let k = 0; k < 3; k++) { const g = T.cg[t * 3 + k]; gn[g * 3] += N[t * 3]; gn[g * 3 + 1] += N[t * 3 + 1]; gn[g * 3 + 2] += N[t * 3 + 2]; has[g] = 1; }
+    for (let g = 0; g < T.ng; g++) { const l = len3(gn[g * 3], gn[g * 3 + 1], gn[g * 3 + 2]); if (l > 1e-12) { gn[g * 3] /= l; gn[g * 3 + 1] /= l; gn[g * 3 + 2] /= l; } }
+    return { gn, has };
+  }
+  const needFaces = mask => { if (!cnt(mask)) throw new Error('Keine Fläche ausgewählt – mindestens alle drei Punkte eines Dreiecks wählen'); };
+  /* Seitenwand zwischen alter Kante (pa,pb) und neuer Kante (qa,qb); flip kehrt die Richtung um */
+  function wall(W, WU, pa, pb, qa, qb, ua, ub, flip) {
+    const tri = (p, q, r, uu, vv, ww) => { W.push(p[0], p[1], p[2], q[0], q[1], q[2], r[0], r[1], r[2]); WU.push(uu[0], uu[1], vv[0], vv[1], ww[0], ww[1]); };
+    if (!flip) { tri(pa, pb, qb, ua, ub, ub); tri(pa, qb, qa, ua, ub, ua); } else { tri(pa, qb, pb, ua, ub, ub); tri(pa, qa, qb, ua, ua, ub); }
+  }
+  const pt = (A, c) => [A[c * 3], A[c * 3 + 1], A[c * 3 + 2]], uvOf = (U, c) => [U[c * 2], U[c * 2 + 1]];
+  function keysOfCorners(T, mask, P2) {
+    const s = new Set();
+    for (let t = 0; t < T.n; t++) if (mask[t]) for (let k = 0; k < 3; k++) { const c = t * 3 + k; s.add(key(P2[c * 3], P2[c * 3 + 1], P2[c * 3 + 2])); }
+    return s;
+  }
+
+  /* ---------- Operationen ---------- */
+  /* Fläche(n) entlang der gemittelten Normalen herausziehen (negativ = eindrücken) */
+  M.extrude = function (T, mask, dist) {
+    needFaces(mask); dist = +dist || 0;
+    const N = faceN(T.P, T.n), { gn } = groupNormals(T, mask, N), bd = boundary(T, mask), P2 = Float32Array.from(T.P);
+    for (let t = 0; t < T.n; t++) if (mask[t]) for (let k = 0; k < 3; k++) { const c = t * 3 + k, g = T.cg[c]; P2[c * 3] += gn[g * 3] * dist; P2[c * 3 + 1] += gn[g * 3 + 1] * dist; P2[c * 3 + 2] += gn[g * 3 + 2] * dist; }
+    const W = [], WU = [];
+    bd.forEach(e => { const ca = e.t * 3 + e.k, cb = e.t * 3 + (e.k + 1) % 3; wall(W, WU, pt(T.P, ca), pt(T.P, cb), pt(P2, ca), pt(P2, cb), uvOf(T.U, ca), uvOf(T.U, cb), false); });
+    const geo = build(join(P2, Float32Array.from(W)), join(T.U, Float32Array.from(WU)), T.n + W.length / 9);
+    return { geo, keys: keysOfCorners(T, mask, P2), info: bd.length + ' Randkanten' };
+  };
+  /* Fläche(n) nach innen verkleinern; mit drop > 0 wird der äußere Rand zusätzlich abgesenkt (Fase) */
+  M.inset = function (T, mask, amount, drop) {
+    needFaces(mask); amount = Math.abs(+amount || 0); drop = +drop || 0;
+    const N = faceN(T.P, T.n), { gn } = groupNormals(T, mask, N), bd = boundary(T, mask);
+    if (!bd.length) throw new Error('Die Auswahl hat keinen Rand (ganzes Objekt gewählt?)');
+    const acc = new Float64Array(T.ng * 3), l1 = new Float64Array(T.ng * 3), has = new Uint8Array(T.ng);
+    bd.forEach(e => {
+      const ca = e.t * 3 + e.k, cb = e.t * 3 + (e.k + 1) % 3, ex = T.P[cb * 3] - T.P[ca * 3], ey = T.P[cb * 3 + 1] - T.P[ca * 3 + 1], ez = T.P[cb * 3 + 2] - T.P[ca * 3 + 2];
+      let fx = N[e.t * 3], fy = N[e.t * 3 + 1], fz = N[e.t * 3 + 2]; const fl = len3(fx, fy, fz) || 1; fx /= fl; fy /= fl; fz /= fl;
+      let wx = fy * ez - fz * ey, wy = fz * ex - fx * ez, wz = fx * ey - fy * ex; const wl = len3(wx, wy, wz) || 1; wx /= wl; wy /= wl; wz /= wl;
+      [e.a, e.b].forEach(g => { acc[g * 3] += wx; acc[g * 3 + 1] += wy; acc[g * 3 + 2] += wz; if (!has[g]) { has[g] = 1; l1[g * 3] = wx; l1[g * 3 + 1] = wy; l1[g * 3 + 2] = wz; } });
+    });
+    const vec = new Float64Array(T.ng * 3);
+    for (let g = 0; g < T.ng; g++) if (has[g]) {
+      const l = len3(acc[g * 3], acc[g * 3 + 1], acc[g * 3 + 2]); if (l < 1e-12) continue;
+      const vx = acc[g * 3] / l, vy = acc[g * 3 + 1] / l, vz = acc[g * 3 + 2] / l, s = amount / Math.max(0.35, vx * l1[g * 3] + vy * l1[g * 3 + 1] + vz * l1[g * 3 + 2]);
+      vec[g * 3] = vx * s; vec[g * 3 + 1] = vy * s; vec[g * 3 + 2] = vz * s;
+    }
+    const P2 = Float32Array.from(T.P), P0 = Float32Array.from(T.P);
+    for (let t = 0; t < T.n; t++) for (let k = 0; k < 3; k++) {
+      const c = t * 3 + k, g = T.cg[c];
+      if (mask[t]) { if (has[g]) { P2[c * 3] += vec[g * 3]; P2[c * 3 + 1] += vec[g * 3 + 1]; P2[c * 3 + 2] += vec[g * 3 + 2]; } }
+      else if (drop && has[g]) { P0[c * 3] -= gn[g * 3] * drop; P0[c * 3 + 1] -= gn[g * 3 + 1] * drop; P0[c * 3 + 2] -= gn[g * 3 + 2] * drop; }
+    }
+    const down = (c) => { const g = T.cg[c], p = pt(T.P, c); return drop ? [p[0] - gn[g * 3] * drop, p[1] - gn[g * 3 + 1] * drop, p[2] - gn[g * 3 + 2] * drop] : p; };
+    const W = [], WU = [];
+    bd.forEach(e => { const ca = e.t * 3 + e.k, cb = e.t * 3 + (e.k + 1) % 3; wall(W, WU, down(ca), down(cb), pt(P2, ca), pt(P2, cb), uvOf(T.U, ca), uvOf(T.U, cb), false); });
+    // Rand der Auswahl in P0 gleich mit absenken (Randdreiecke außerhalb)
+    const base = drop ? P0 : T.P;
+    const geo = build(join(joinMasked(base, P2, mask, T.n), Float32Array.from(W)), join(T.U, Float32Array.from(WU)), T.n + W.length / 9);
+    return { geo, keys: keysOfCorners(T, mask, P2), info: bd.length + ' Randkanten' };
+  };
+  function joinMasked(base, P2, mask, n) { const r = Float32Array.from(base); for (let t = 0; t < n; t++) if (mask[t]) r.set(P2.subarray(t * 9, t * 9 + 9), t * 9); return r; }
+  M.fase = (T, mask, amount) => M.inset(T, mask, amount, amount);
+
+  function pick(T, mask, want) {
+    const idx = []; for (let t = 0; t < T.n; t++) if ((mask[t] ? 1 : 0) === want) idx.push(t);
+    const P = new Float32Array(idx.length * 9), U = new Float32Array(idx.length * 6);
+    idx.forEach((t, i) => { P.set(T.P.subarray(t * 9, t * 9 + 9), i * 9); U.set(T.U.subarray(t * 6, t * 6 + 6), i * 6); });
+    return { P, U, n: idx.length };
+  }
+  M.remove = function (T, mask) {
+    if (!cnt(mask)) throw new Error('Nichts ausgewählt');
+    const r = pick(T, mask, 0); if (!r.n) throw new Error('Das würde das ganze Objekt löschen');
+    return { geo: build(r.P, r.U, r.n), keys: new Set(), info: cnt(mask) + ' Dreiecke entfernt' };
+  };
+  M.separate = function (T, mask) {
+    if (!cnt(mask)) throw new Error('Nichts ausgewählt');
+    const a = pick(T, mask, 0), b = pick(T, mask, 1); if (!a.n) throw new Error('Das würde das ganze Objekt abtrennen');
+    return { geo: build(a.P, a.U, a.n), part: build(b.P, b.U, b.n), keys: new Set(), info: b.n + ' Dreiecke abgetrennt' };
+  };
+  M.copy = function (T, mask) {
+    if (!cnt(mask)) throw new Error('Nichts ausgewählt');
+    const b = pick(T, mask, 1); return { part: build(b.P, b.U, b.n), info: b.n + ' Dreiecke kopiert' };
+  };
+  /* Punkte (Schlüsselmenge der Auswahl) zusammenführen: center = alle in die Mitte, sonst Raster der Größe thr */
+  M.merge = function (T, keySet, thr) {
+    const sel = new Uint8Array(T.ng); let ns = 0; keySet.forEach(k => { const g = T.map.get(k); if (g !== undefined) { sel[g] = 1; ns++; } });
+    if (!ns) throw new Error('Keine Punkte ausgewählt');
+    thr = +thr || 0; const cl = new Map(), of = new Int32Array(T.ng).fill(-1), cs = [];
+    for (let g = 0; g < T.ng; g++) if (sel[g]) {
+      const x = T.gp[g * 3], y = T.gp[g * 3 + 1], z = T.gp[g * 3 + 2], ck = thr > 0 ? Math.floor(x / thr) + ',' + Math.floor(y / thr) + ',' + Math.floor(z / thr) : 'c';
+      let i = cl.get(ck); if (i === undefined) { i = cs.length; cl.set(ck, i); cs.push({ s: [0, 0, 0], n: 0 }); }
+      cs[i].s[0] += x; cs[i].s[1] += y; cs[i].s[2] += z; cs[i].n++; of[g] = i;
+    }
+    const P2 = Float32Array.from(T.P), keys = new Set();
+    for (let c = 0; c < T.n * 3; c++) { const g = T.cg[c]; if (of[g] >= 0) { const q = cs[of[g]]; P2[c * 3] = q.s[0] / q.n; P2[c * 3 + 1] = q.s[1] / q.n; P2[c * 3 + 2] = q.s[2] / q.n; } }
+    cs.forEach(q => keys.add(key(q.s[0] / q.n, q.s[1] / q.n, q.s[2] / q.n)));
+    const before = T.n, geo = build(P2, T.U, T.n);
+    return { geo, keys, info: ns + ' Punkte zu ' + cs.length + ' verschmolzen, ' + (before - Math.floor(geo.attributes.position.count / 3)) + ' Dreiecke entfallen' };
+  };
+  /* Kantenschleife: alle Dreiecke an Ebenen senkrecht zur Achse auftrennen. ats = Positionen oder { count, rel } */
+  M.loopcut = function (T, axis, ats) {
+    const ax = { x: 0, y: 1, z: 2 }[String(axis).toLowerCase()]; if (ax === undefined) throw new Error('Achse x, y oder z');
+    let lo = Infinity, hi = -Infinity; for (let g = 0; g < T.ng; g++) { const v = T.gp[g * 3 + ax]; if (v < lo) lo = v; if (v > hi) hi = v; }
+    let list;
+    if (Array.isArray(ats)) list = ats.map(Number);
+    else if (ats && ats.count) { list = []; const c = Math.max(1, Math.min(64, ats.count | 0)); for (let i = 1; i <= c; i++) list.push(lo + (hi - lo) * i / (c + 1)); }
+    else if (ats && ats.at !== undefined) list = [ats.rel ? lo + (hi - lo) * ats.at : +ats.at];
+    else list = [(lo + hi) / 2];
+    let P = T.P, U = T.U, n = T.n; const eps = 1e-7;
+    list.forEach(at => {
+      const oP = [], oU = [];
+      const emit = (poly) => { for (let i = 1; i + 1 < poly.length; i++) { [poly[0], poly[i], poly[i + 1]].forEach(v => { oP.push(v.p[0], v.p[1], v.p[2]); oU.push(v.u[0], v.u[1]); }); } };
+      for (let t = 0; t < n; t++) {
+        const V3 = [0, 1, 2].map(k => ({ p: [P[(t * 3 + k) * 3], P[(t * 3 + k) * 3 + 1], P[(t * 3 + k) * 3 + 2]], u: [U[(t * 3 + k) * 2], U[(t * 3 + k) * 2 + 1]] }));
+        const d = V3.map(v => v.p[ax] - at), s = d.map(x => x > eps ? 1 : x < -eps ? -1 : 0);
+        if (!(Math.max(...s) > 0 && Math.min(...s) < 0)) { emit(V3); continue; }
+        const L = [], R = [];
+        for (let i = 0; i < 3; i++) {
+          const j = (i + 1) % 3, a = V3[i], b = V3[j];
+          if (s[i] <= 0) L.push(a); if (s[i] >= 0) R.push(a);
+          if (s[i] * s[j] < 0) {
+            const p = a.p[ax] <= b.p[ax] ? a : b, q = p === a ? b : a, tt = (at - p.p[ax]) / (q.p[ax] - p.p[ax]);
+            const I = { p: [p.p[0] + (q.p[0] - p.p[0]) * tt, p.p[1] + (q.p[1] - p.p[1]) * tt, p.p[2] + (q.p[2] - p.p[2]) * tt], u: [p.u[0] + (q.u[0] - p.u[0]) * tt, p.u[1] + (q.u[1] - p.u[1]) * tt] };
+            I.p[ax] = at; L.push(I); R.push(I);
+          }
+        }
+        emit(L); emit(R);
+      }
+      P = Float32Array.from(oP); U = Float32Array.from(oU); n = oP.length / 9;
+    });
+    return { geo: build(P, U, n), keys: new Set(), info: list.length + ' Schnitt' + (list.length === 1 ? '' : 'e') + ', ' + n + ' Dreiecke' };
+  };
+  /* Punkte der Auswahl verschieben / skalieren (um ihren Mittelpunkt) / drehen, optional mit weichem Abfall (soft = Radius) */
+  M.transform = function (T, mask, o) {
+    needFaces(mask); o = o || {};
+    const sel = new Uint8Array(T.ng); const c = [0, 0, 0]; let ns = 0;
+    for (let t = 0; t < T.n; t++) if (mask[t]) for (let k = 0; k < 3; k++) { const g = T.cg[t * 3 + k]; if (!sel[g]) { sel[g] = 1; ns++; c[0] += T.gp[g * 3]; c[1] += T.gp[g * 3 + 1]; c[2] += T.gp[g * 3 + 2]; } }
+    c[0] /= ns; c[1] /= ns; c[2] /= ns;
+    const mv = o.move || [0, 0, 0], sc = o.scale === undefined ? [1, 1, 1] : (Array.isArray(o.scale) ? o.scale : [o.scale, o.scale, o.scale]), rot = (o.rotate || [0, 0, 0]).map(x => x * Math.PI / 180);
+    const q = new THREE.Quaternion().setFromEuler(new THREE.Euler(rot[0], rot[1], rot[2]));
+    const sp = []; for (let g = 0; g < T.ng; g++) if (sel[g]) sp.push(T.gp[g * 3], T.gp[g * 3 + 1], T.gp[g * 3 + 2]);
+    const R = +o.soft || 0, w = new Float32Array(T.ng), nsel = sp.length / 3, stride = nsel * T.ng > 4e6 ? Math.ceil(nsel * T.ng / 4e6) : 1;
+    for (let g = 0; g < T.ng; g++) {
+      if (sel[g]) { w[g] = 1; continue; } if (!R) continue;
+      let d2 = Infinity; for (let s = 0; s < nsel; s += stride) { const dx = sp[s * 3] - T.gp[g * 3], dy = sp[s * 3 + 1] - T.gp[g * 3 + 1], dz = sp[s * 3 + 2] - T.gp[g * 3 + 2], d = dx * dx + dy * dy + dz * dz; if (d < d2) d2 = d; }
+      const tt = Math.sqrt(d2) / R; if (tt < 1) w[g] = (1 - tt * tt) * (1 - tt * tt);
+    }
+    const np = new Float32Array(T.ng * 3), v = new THREE.Vector3();
+    for (let g = 0; g < T.ng; g++) {
+      const x = T.gp[g * 3], y = T.gp[g * 3 + 1], z = T.gp[g * 3 + 2];
+      if (!w[g]) { np[g * 3] = x; np[g * 3 + 1] = y; np[g * 3 + 2] = z; continue; }
+      v.set((x - c[0]) * sc[0], (y - c[1]) * sc[1], (z - c[2]) * sc[2]).applyQuaternion(q); v.x += c[0] + mv[0]; v.y += c[1] + mv[1]; v.z += c[2] + mv[2];
+      np[g * 3] = x + (v.x - x) * w[g]; np[g * 3 + 1] = y + (v.y - y) * w[g]; np[g * 3 + 2] = z + (v.z - z) * w[g];
+    }
+    const P2 = new Float32Array(T.P.length), keys = new Set();
+    for (let k = 0; k < T.n * 3; k++) { const g = T.cg[k]; P2[k * 3] = np[g * 3]; P2[k * 3 + 1] = np[g * 3 + 1]; P2[k * 3 + 2] = np[g * 3 + 2]; if (sel[g]) keys.add(key(np[g * 3], np[g * 3 + 1], np[g * 3 + 2])); }
+    return { geo: build(P2, T.U, T.n, 180), keys, info: ns + ' Punkte bewegt' };
+  };
+
+  /* Alles in einem: Objekt-Netz + Befehlsobjekt → Ergebnis. sel: Auswahlregel, op: Name */
+  M.run = function (geo, c) {
+    const T = M.topo(geo), mask = c.keys ? M.facesFromKeys(T, c.keys, c.any) : M.select(T, c.select);
+    const op = String(c.op || '').toLowerCase();
+    if (op === 'extrude' || op === 'extrudieren') return M.extrude(T, mask, c.amount === undefined ? 0.2 : c.amount);
+    if (op === 'inset' || op === 'einsetzen') return M.inset(T, mask, c.amount === undefined ? 0.1 : c.amount, 0);
+    if (op === 'fase' || op === 'bevel') return M.fase(T, mask, c.amount === undefined ? 0.05 : c.amount);
+    if (op === 'delete' || op === 'löschen' || op === 'loeschen') return M.remove(T, mask);
+    if (op === 'separate' || op === 'abtrennen') return M.separate(T, mask);
+    if (op === 'copy' || op === 'duplicate' || op === 'kopieren') return M.copy(T, mask);
+    if (op === 'move' || op === 'scale' || op === 'rotate' || op === 'transform') return M.transform(T, mask, { move: c.move || (op === 'move' ? c.by : null), scale: c.scale, rotate: c.rotate, soft: c.soft });
+    if (op === 'merge' || op === 'verschmelzen') {
+      const ks = new Set(); for (let t = 0; t < T.n; t++) if (mask[t]) for (let k = 0; k < 3; k++) ks.add(T.keys[T.cg[t * 3 + k]]);
+      return M.merge(T, c.keys || ks, c.mode === 'center' ? 0 : (c.distance || 0));
+    }
+    if (op === 'loopcut' || op === 'schleife') return M.loopcut(T, c.axis || 'y', c.at !== undefined ? { at: c.at, rel: c.rel } : { count: c.count || 1 });
+    throw new Error('Unbekannte Mesh-Operation: ' + c.op + ' (extrude, inset, fase, delete, separate, copy, move, scale, rotate, merge, loopcut)');
+  };
+  return M;
+})();
 
 // ---- 50-cad.js ----
 /* ============================================================
@@ -4395,7 +4697,7 @@ UI.panels.cad = function (box) {
 };
 
 /* ----- Mesh (Punktbearbeitung) ----- */
-let nudge = 0.1, smoothIt = 2, subIt = 1, smoothLam = 0.5;
+let nudge = 0.1, smoothIt = 2, subIt = 1, smoothLam = 0.5, exAmt = 0.2, inAmt = 0.1, mgDist = 0.02, lcAxis = 'y', lcN = 1;
 UI.panels.edit = function (box) {
   const o = E_.obj;
   box.append(
@@ -4410,11 +4712,26 @@ UI.panels.edit = function (box) {
     sec('Auswahl formen',
       rng('Entlang Normale (m)', nudge, -1, 1, 0.01, n => nudge = n), row(btn('Anwenden', () => E_.nudge(nudge), { cls: 'sm pri' })),
       rng('Glätten (Durchgänge)', smoothIt, 1, 20, 1, n => smoothIt = n, x => String(x)), row(btn('Auswahl glätten', () => E_.smoothSel(smoothIt), { cls: 'sm' }))),
+    sec('Flächen bearbeiten',
+      hint('Wirkt auf alle Dreiecke, deren drei Punkte gewählt sind (Röntgen einschalten, Rahmen um die Fläche ziehen). Tasche: erst Einsetzen, dann negativ Extrudieren.'),
+      rng('Extrudieren (m)', exAmt, -2, 2, 0.01, n => exAmt = n), row(btn('Extrudieren', () => UI.meshop({ op: 'extrude', amount: exAmt }, 'Extrudieren'), { cls: 'sm pri' })),
+      rng('Einsetzen / Fase (m)', inAmt, 0.005, 1, 0.005, n => inAmt = n), row(btn('Einsetzen', () => UI.meshop({ op: 'inset', amount: inAmt }, 'Einsetzen'), { cls: 'sm' }), btn('Fase', () => UI.meshop({ op: 'fase', amount: inAmt }, 'Fase'), { cls: 'sm', title: 'Schrägt den Rand der Auswahl ab' })),
+      row(btn('Löschen', () => UI.meshop({ op: 'delete' }, 'Löschen'), { cls: 'sm', title: 'Entfernt alle Dreiecke, die einen gewählten Punkt berühren' }), btn('Abtrennen', () => UI.meshop({ op: 'separate' }, 'Abtrennen'), { cls: 'sm', title: 'Macht aus der Auswahl ein eigenes Objekt' }), btn('Kopieren', () => UI.meshop({ op: 'copy' }, 'Kopieren'), { cls: 'sm', title: 'Kopiert die Auswahl als neues Objekt' })),
+      rng('Verschmelzen bis Abstand (m)', mgDist, 0.001, 0.5, 0.001, n => mgDist = n), row(btn('Zur Mitte', () => UI.meshop({ op: 'merge', mode: 'center' }, 'Verschmelzen'), { cls: 'sm' }), btn('Nach Abstand', () => UI.meshop({ op: 'merge', mode: 'distance', distance: mgDist }, 'Verschmelzen'), { cls: 'sm' }))),
+    sec('Kantenschleife',
+      hint('Schneidet das Netz an einer Ebene auf (Dreiecke werden geteilt). Danach lassen sich die neuen Punkte wählen und bewegen.'),
+      row(selIn([['x', 'X'], ['y', 'Y'], ['z', 'Z']], lcAxis, v => lcAxis = v), h('span', { class: 'grow' }, numIn(lcN, { step: 1, min: 1, max: 32, int: true }, v => lcN = v)), btn('Einfügen', () => UI.meshop({ op: 'loopcut', axis: lcAxis, count: lcN }, 'Kantenschleife'), { cls: 'sm pri' }))),
     sec('Ganzes Objekt',
       row(btn('Unterteilen (Loop)', () => UI.subdivide('loop'), { cls: 'sm', title: 'Rundet ab, vervierfacht Dreiecke' }), btn('Unterteilen (flach)', () => UI.subdivide('flat'), { cls: 'sm', title: 'Behält die Form' })),
       rng('Laplace-Glättung', smoothLam, 0.1, 0.9, 0.05, n => smoothLam = n), row(btn('Objekt glätten', () => { const ob = E_.obj; if (!ob) return; const keep = ob; E_.leave(); geoOp('Glätten', x => F.geo.smooth(x.geometry, 2, smoothLam)); E_.enter(keep); }, { cls: 'sm' })),
       row(btn('UV erzeugen (Box)', () => PT_.ensureUV('box'), { cls: 'sm' }), btn('Kugel', () => PT_.ensureUV('sphere'), { cls: 'sm' }), btn('Zylinder', () => PT_.ensureUV('cylinder'), { cls: 'sm' }), btn('Planar', () => PT_.ensureUV('planar'), { cls: 'sm' }))));
   setTimeout(UI.refreshEdit, 0);
+};
+UI.meshop = function (c, label) {
+  const ob = E_.obj; if (!ob) return; c = Object.assign({}, c);
+  if (c.op !== 'loopcut') { if (!E_.sel.size) return F.say('Zuerst Punkte auswählen', 'err'); c.keys = E_.selKeys(); if (c.op === 'delete') c.any = true; }
+  try { const r = F.meshEdit(ob, c); E_.leave(); E_.enter(ob); if (r.keys && r.keys.size) E_.selectKeys(r.keys); F.say(label + ': ' + r.info); }
+  catch (e) { F.say(label + ' fehlgeschlagen: ' + e.message, 'err'); }
 };
 UI.subdivide = function (kind) {
   const ob = E_.obj; if (!ob) return; if (F.geo.stats(ob.geometry).tris * 4 > 400000) return F.say('Mesh ist bereits sehr fein', 'err');
@@ -4669,6 +4986,20 @@ UI.boolean = function (op) {
   try { F.boolean(op, S.sel[0], S.sel[1], cadKeep); } catch (e) { F.say(e.message, 'err'); }
 };
 
+/* Mesh-Operation auf ein Objekt anwenden (Oberfläche und KI-Befehl), ein Rückgängig-Schritt */
+F.meshEdit = function (ob, c) {
+  if (!ob || !ob.isMesh) throw new Error('Kein Mesh');
+  if (ob.isSkinnedMesh) throw new Error('Geriggte Meshes lassen sich nicht verformen');
+  const op = String(c.op || '').toLowerCase(), r = F.meshops.run(ob.geometry, c); let part = null;
+  F.group('Mesh: ' + op, () => {
+    if (r.geo) { V.setGeometry(ob, r.geo, 'Mesh: ' + op, 'mesh', null); ob.userData.sculpt = false; }
+    if (r.part) {
+      const mat = ob.material.clone(); mat.userData = Object.assign({}, ob.material.userData);
+      part = V.addMesh(r.part, { name: c.name || (ob.name + ' Teil'), material: mat, position: ob.position.toArray(), rotation: [ob.rotation.x / DEG, ob.rotation.y / DEG, ob.rotation.z / DEG], scale: ob.scale.toArray(), dropToGrid: false, select: false });
+    }
+  });
+  V.refreshAll(); return { obj: ob, part, keys: r.keys, info: r.info };
+};
 const clampR = r => Math.max(0.02, Math.min(0.95, r > 1 ? r / 100 : r));
 F.api = (function () {
   const find = n => {
@@ -4719,6 +5050,74 @@ F.api = (function () {
   api.deform = (o, kind, amount) => modify(o, 'Verformen', m => { const g = F.geo.plain(m.geometry); F.geo.deform(g, kind, kind === 'taper' ? (+amount || 45) / 100 : +amount || 30); return g; });
   api.merge = (names, name) => { const l = (names || []).map(find); if (l.length < 2) throw new Error('Mindestens zwei Objekte nennen'); V.select(l[0]); l.slice(1).forEach(o => V.select(o, true)); UI.join(); if (name && S.active) S.active.name = V.uniqueName(String(name)); V.refreshAll(); return S.active; };
   api.scene = n => { const k = String(n || 'new'); if (k === 'new') { UI.clearScene(); } else if (k === 'demo') F.demo(); else if (k === 'rtw') F.demoAmbulance(); else if (k === 'city') { UI.clearScene(); F.map.sample(); UI.setMode('map'); } else if (k === 'rig') F.demoRig(); else if (k === 'scan') return F.demoScan(); else throw new Error('Szene: new, demo, rtw, city, rig oder scan'); return true; };
+  api.edit = (o, c) => { const m = find(o), r = F.meshEdit(m, c || {}); F.say('Mesh: ' + r.info); return r.part || m; };
+  /* Skulptur per Befehl: Pinselstriche an Weltpunkten ("at") oder auf der Oberfläche über (x,z) ("top") */
+  api.sculpt = (o, s) => {
+    s = s || {}; const m = find(o), K = F.sculpt; if (!K.ready(m)) throw new Error(F.say.last || 'Mesh lässt sich nicht skulptieren');
+    const brush = s.brush || 'draw'; if (['draw', 'inflate', 'smooth', 'pinch', 'flatten'].indexOf(brush) < 0) throw new Error('Pinsel: draw, inflate, smooth, pinch oder flatten');
+    const keep = { brush: K.brush, radius: K.radius, strength: K.strength, falloff: K.falloff, sym: K.sym, invert: K.invert, obj: K.obj };
+    K.obj = m; K.brush = brush; K.radius = +s.radius || 0.3; K.strength = s.strength === undefined ? 0.5 : +s.strength; K.falloff = s.falloff || 'smooth'; K.sym = !!s.sym; K.invert = !!s.invert;
+    m.updateMatrixWorld(true); const pts = [], list = v => v ? (Array.isArray(v[0]) ? v : [v]) : [];
+    list(s.at).forEach(p => pts.push(new THREE.Vector3(+p[0], +p[1], +p[2])));
+    list(s.top).forEach(p => { const h = new THREE.Raycaster(new THREE.Vector3(+p[0], 1000, +p[1]), new THREE.Vector3(0, -1, 0)).intersectObject(m, false)[0]; if (h) pts.push(h.point.clone()); });
+    if (Array.isArray(s.line) && s.line.length > 1) for (let i = 0; i + 1 < s.line.length; i++) { const a = new THREE.Vector3(...s.line[i]), b = new THREE.Vector3(...s.line[i + 1]), n = Math.max(1, Math.ceil(a.distanceTo(b) / (K.radius * 0.25))); for (let k = 0; k <= n; k++) pts.push(a.clone().lerp(b, k / n)); }
+    if (!pts.length) { Object.assign(K, keep); throw new Error('Sculpt: "at" [x,y,z], "top" [x,z] oder "line" angeben'); }
+    const g = m.geometry, pos = g.attributes.position, old = Float32Array.from(pos.array), reps = Math.max(1, Math.min(40, (s.repeat | 0) || 1)), up = new THREE.Vector3(0, 1, 0);
+    try { pts.forEach(pw => { const p = m.worldToLocal(pw.clone()); for (let r = 0; r < reps; r++) { K.dab(p, up); if (K.sym) { const pm = p.clone(); pm.x = -pm.x; K.dab(pm, up); } } }); }
+    finally { Object.assign(K, keep); }
+    g.computeVertexNormals(); g.computeBoundingSphere(); g.computeBoundingBox(); V.setPositionsUndo(m, old, Float32Array.from(pos.array), 'Skulptur'); V.refreshAll(); F.say('Skulptur: ' + pts.length + ' Punkt' + (pts.length === 1 ? '' : 'e') + ' × ' + reps); return m;
+  };
+  /* Textur per Befehl: Ebene füllen, Generator, Verlauf, Filter, Formen, Text, dann dem Objekt zuweisen */
+  api.paint = (o, s) => {
+    s = s || {}; const m = find(o), P = F.paint; V.select(m);
+    const hasUV = g => { const u = g.attributes.uv; if (!u) return false; const n = Math.min(u.count, 4000); for (let i = 0; i < n; i++) if (u.getX(i) || u.getY(i)) return true; return false; };
+    if (s.uv || !hasUV(m.geometry)) P.ensureUV(s.uv && s.uv !== true ? String(s.uv) : 'box');
+    const slot = s.slot || 'map'; if (!P.SLOTS[slot]) throw new Error('Slot: ' + Object.keys(P.SLOTS).join(', '));
+    if (s.size && !P.docs[slot]) P.size = Math.max(64, Math.min(4096, s.size | 0));
+    P.slot = slot; const d = P.doc(slot), W = d.size, keepC = [P.color, P.color2];
+    try {
+      if (s.color) P.color = String(s.color); if (s.color2) P.color2 = String(s.color2);
+      if (s.layer === 'new') P.layerOp('add');
+      const l = P.layer(), hexOk = c => /^#[0-9a-f]{6}$/i.test(c);
+      if (s.fill) { if (!hexOk(s.fill)) throw new Error('fill: Farbe als "#rrggbb"'); P.snap(); l.ctx.fillStyle = s.fill; l.ctx.fillRect(0, 0, W, W); }
+      if (s.generate) { const g = typeof s.generate === 'string' ? { name: s.generate } : s.generate; if (!P.GENS[g.name]) throw new Error('Generator: ' + Object.keys(P.GENS).join(', ')); if (g.color) P.color = g.color; if (g.color2) P.color2 = g.color2; P.generate(g.name, g.a === undefined ? P.GENS[g.name].a[3] : +g.a); }
+      if (s.gradient) { P.color = s.gradient[0]; P.color2 = s.gradient[1]; P.shape('gradient', { x: 0, y: 0 }, { x: 0, y: W }); }
+      (s.filters || (s.filter ? [s.filter] : [])).forEach(f => { const g = typeof f === 'string' ? { name: f } : f; if (!P.FILTERS[g.name]) throw new Error('Filter: ' + Object.keys(P.FILTERS).join(', ')); const F0 = P.FILTERS[g.name]; P.applyFilter(g.name, g.a === undefined && F0.a ? F0.a[3] : g.a, g.b === undefined && F0.b ? F0.b[3] : g.b); });
+      (s.shapes || []).forEach(sh => {
+        if (sh.color) P.color = sh.color; const keepOp = P.brush.opacity, keepFill = P.fillShape; P.brush.opacity = sh.opacity === undefined ? 1 : +sh.opacity; P.fillShape = sh.stroke ? false : true; if (sh.width) P.brush.size = (+sh.width - 1) * 4;
+        try { if (sh.rect) P.shape('rect', { x: +sh.rect[0], y: +sh.rect[1] }, { x: +sh.rect[2], y: +sh.rect[3] }); else if (sh.ellipse) P.shape('ellipse', { x: +sh.ellipse[0], y: +sh.ellipse[1] }, { x: +sh.ellipse[2], y: +sh.ellipse[3] }); else if (sh.line) P.shape('line', { x: +sh.line[0], y: +sh.line[1] }, { x: +sh.line[2], y: +sh.line[3] }); } finally { P.brush.opacity = keepOp; P.fillShape = keepFill; }
+      });
+      (s.texts || (s.text ? [s.text] : [])).forEach(t => {
+        P.snap(); const c = P.layer().ctx; c.save(); c.fillStyle = t.color || P.color; c.font = (t.bold === false ? '' : 'bold ') + Math.round(+t.size || W / 8) + 'px ' + (t.font || 'sans-serif'); c.textAlign = t.align || 'center'; c.textBaseline = 'middle';
+        if (t.rotate) { c.translate(+t.x, +t.y); c.rotate(t.rotate * DEG); c.fillText(String(t.text), 0, 0); } else c.fillText(String(t.text), +t.x, +t.y); c.restore(); P.compose();
+      });
+    } finally { P.color = keepC[0]; P.color2 = keepC[1]; }
+    P.assign(slot, true); if (s.rough !== undefined) m.material.roughness = +s.rough; if (s.metal !== undefined) m.material.metalness = +s.metal; m.material.needsUpdate = true;
+    V.refreshAll(); F.say('Textur (' + P.SLOTS[slot] + ') auf ' + m.name); return m;
+  };
+  /* Rigging per Befehl: Vorlage oder eigene Knochen, Binden, Pose, Keys, Abspielen */
+  api.rig = s => {
+    s = s || {}; const RG = F.rig, q = new THREE.Quaternion(), e = new THREE.Euler();
+    const bone = n => { const b = RG.bones.find(x => x.name === n) || RG.bones.find(x => x.name.toLowerCase() === String(n).toLowerCase()); if (!b) throw new Error('Knochen nicht gefunden: ' + n + ' (vorhanden: ' + RG.bones.map(x => x.name).join(', ') + ')'); return b; };
+    const applyPose = pz => { RG.resetPose(); Object.keys(pz || {}).forEach(n => { const b = bone(n), r = RG.rest.get(b) || { q: new THREE.Quaternion() }, v = pz[n]; e.set(v[0] * DEG, v[1] * DEG, v[2] * DEG); q.setFromEuler(e); b.quaternion.copy(r.q).multiply(q); }); RG.root.updateMatrixWorld(true); V.requestRender(); };
+    if (s.clear) RG.clearAll();
+    if (s.preset) { if (['humanoid', 'arm', 'chain'].indexOf(s.preset) < 0) throw new Error('Vorlage: humanoid, arm oder chain'); RG.preset(s.preset, s.n); }
+    if (Array.isArray(s.bones)) {
+      if (RG.skeleton) RG.unbind(true); if (s.replace) RG.clearAll(); RG.setMode('edit'); const by = {}; RG.bones.forEach(b => by[b.name] = b);
+      s.bones.forEach(d => { const par = d.parent ? by[d.parent] : null; if (d.parent && !par) throw new Error('Eltern-Knochen nicht gefunden: ' + d.parent); by[d.name] = RG.addBone(d.name, new THREE.Vector3(...vec(d.pos, [0, 0, 0])), par); });
+      RG.saveRest(); RG.select(RG.bones[0]);
+    }
+    if (s.bind !== undefined) { const sm = RG.bind(find(s.bind), s.sharp); if (!sm) throw new Error(F.say.last || 'Binden fehlgeschlagen'); }
+    if (s.unbind) RG.unbind();
+    if (s.pose) { RG.setMode('pose'); applyPose(s.pose); }
+    if (s.reset) RG.resetPose();
+    if (s.duration) RG.duration = Math.max(0.1, +s.duration);
+    if (s.loop !== undefined) RG.loop = !!s.loop;
+    if (Array.isArray(s.keys)) { if (!RG.bones.length) throw new Error('Keine Knochen vorhanden'); RG.setMode('pose'); RG.keys = []; s.keys.forEach(k => { applyPose(k.pose); RG.setKey(+k.t || 0); }); RG.seek(0); }
+    if (s.time !== undefined) RG.seek(+s.time);
+    if (s.play !== undefined) RG.play(!!s.play);
+    V.refreshAll(); F.say('Rig: ' + RG.bones.length + ' Knochen, ' + RG.keys.length + ' Key' + (RG.keys.length === 1 ? '' : 's') + (RG.skeleton ? ', gebunden' : '')); return RG.bones.map(b => b.name);
+  };
   api.screenshot = () => V.screenshot();
   api.photo = { simulate: (n, elev, f35) => F.photo.addSimulated({ n: n || 24, elev: elev === undefined ? 22 : elev, f35: f35 || 30 }), build: o => { Object.assign(F.photo.cfg, o || {}); return F.photo.build(); }, clear: () => F.photo.clear() };
   api.view = n => V.viewDir(n); api.frame = () => V.frame();
@@ -4731,7 +5130,11 @@ F.cmd = function (list) {
   const api = F.api; if (!Array.isArray(list)) list = [list]; let n = 0;
   list.forEach((c, i) => {
     try {
-      if (c.add) api.add(c.add, c);
+      if (c.edit) api.edit(c.edit, c);
+      else if (c.sculpt) api.sculpt(c.sculpt, c);
+      else if (c.paint) api.paint(c.paint, c);
+      else if (c.rig) api.rig(c.rig === true ? {} : c.rig);
+      else if (c.add) api.add(c.add, c);
       else if (c.boolean) api.subtract && F.boolean(c.boolean, api.find(c.a), api.find(c.b), !!c.keep, c.name);
       else if (c.set) { const m = api.find(c.set); api.place(m, c); V.refreshAll(); }
       else if (c.delete) api.remove(c.delete);
@@ -4782,6 +5185,10 @@ F.llmPrompt = function () {
     '{"lathe":{"points":[[0.5,0],[0.6,0.5],[0.3,1.0]],"segments":48,"name":"Vase"}}   // Profil (Radius, Höhe) wird gedreht\n' +
     '{"map": { …GeoJSON oder Overpass-JSON… }}   // Gebäude, Straßen, Wasser, Grün\n' +
     '{"mirror":"Sockel","axis":"x","cut":false}   {"array":"Zaun","count":6,"offset":[0.5,0,0]}   {"shell":"Kugel","thickness":0.03}   {"subdivide":"Block","kind":"loop"}   {"smooth":"Skulptur","iterations":2}   {"decimate":"Scan","ratio":0.3}   {"deform":"Turm","kind":"twist","amount":45}   // twist | taper | bend\n' +
+    '{"edit":"Block","select":{"normal":[0,1,0],"tol":20},"op":"extrude","amount":0.3}   // Mesh-Bearbeitung. op: extrude | inset | fase | delete | separate | copy | move | scale | rotate | merge | loopcut. select: "all" oder {normal:[x,y,z], tol:Grad, axis:"y", min:0.9, max:1, rel:true, box:[[x0,y0,z0],[x1,y1,z1]]} (lokale Koordinaten, rel:true = Anteil 0..1 der Ausdehnung). Tasche: erst inset, dann extrude mit negativem amount. move/scale/rotate: "move":[x,y,z], "soft":Radius für weichen Abfall. loopcut: "axis":"y","count":3. separate/copy: "name"\n' +
+    '{"sculpt":"Kugel","brush":"inflate","top":[0.2,0.1],"radius":0.4,"strength":0.6,"repeat":3}   // Pinsel draw | inflate | smooth | pinch | flatten an einem Weltpunkt "at":[x,y,z], einem Oberflächenpunkt über (x,z) "top":[x,z] oder entlang "line":[[x,y,z],[x,y,z]]; "invert":true, "sym":true. Das Netz braucht genug Dreiecke (vorher subdivide)\n' +
+    '{"paint":"Wand","generate":{"name":"bricks","a":10,"color":"#8a3b2a","color2":"#d9d2c3"},"text":{"text":"RTW","x":512,"y":300,"size":120,"color":"#ffffff"}}   // Textur auf 1024 × 1024 Pixeln: fill "#rrggbb", generate checker | clouds | marble | wood | bricks | uv | ramp, gradient ["#..","#.."], filter noise | blur | invert | gray, shapes [{"rect":[x0,y0,x1,y1],"color":"#.."}] (auch ellipse, line), text; "slot":"map" | "roughnessMap" | "bumpMap"; UVs entstehen automatisch\n' +
+    '{"rig":{"preset":"humanoid"}}  {"rig":{"bind":"Figur"}}  {"rig":{"keys":[{"t":0,"pose":{"UpperArm_L":[0,0,0]}},{"t":1,"pose":{"UpperArm_L":[0,0,70]}}],"duration":1,"play":true}}   // Knochen: preset humanoid | arm | chain, oder "bones":[{"name":"A","pos":[0,1,0]},{"name":"B","pos":[0,1.5,0],"parent":"A"}]; bind bindet ein Mesh mit Auto-Gewichten; Posen als Drehwinkel in Grad je Knochen; keys erzeugt eine Animation\n' +
     '{"merge":["Teil1","Teil2"],"name":"Gruppe"}   {"scene":"rtw"}   // new | demo | rtw (Rettungswagen, über 160.000 Dreiecke) | city | rig | scan (Foto-Scanner-Demo)\n' +
     '{"photo":{"simulate":24,"elev":22,"build":true}}   // Foto-Scanner: Testfotos aus der Szene rendern und daraus ein Modell rechnen\n' +
     '{"mode":"photo"}   // object | cad | edit | sculpt | paint | rig | map | photo | code\n' +
@@ -4803,7 +5210,8 @@ F.manual = function () {
     'Import (Knopf „Importieren“, oder Dateien ins Fenster ziehen): GLB, glTF, VRM, FBX, OBJ (+MTL, Texturen), DAE, 3DS, 3MF, STL, PLY, ZIP (mit Texturen), Punktwolken (XYZ, PTS, CSV, PCD, LAS), Gaussian Splats (.splat, 3DGS-PLY). Wolken und Splats lassen sich unter „Export → Importieren“ per „In Netz wandeln“ in ein Dreiecksnetz umwandeln. Mehrere Fotos (JPG, PNG, WebP) öffnen den Fotomodus.\n' +
     'Fotomodus (Modus „Foto“): 16 bis 40 Fotos rund um ein Objekt auf einfarbigem Untergrund, der Reihe nach benannt. Der Browser bestimmt Maske, Kamerahöhe und Brennweite, rechnet daraus die Hülle (Sichtkörper) und legt die Fotos als Textur darüber. Alles lokal. Grenzen: keine Mulden/Hohlräume, kein Glas, keine Räume. Ohne eigene Fotos: „Testaufnahmen aus der Szene“ oder Szene „Demo: Foto-Scanner“.\n' +
     'Karten: Modus „Karte“ mit GeoJSON oder Overpass-JSON (Gebäude, Straßen, Wasser, Grün) und optionaler Höhenkarte als Bild → Gelände.\n' +
-    'Rigging: Knochen bauen, Auto-Gewichte, Pose/Animation, Keys; Export als glTF/Unity/Unreal/Godot/Blender.\n' +
+    'Rigging: Knochen bauen, Auto-Gewichte, Pose/Animation, Keys; Export als glTF/Unity/Unreal/Godot/Blender. Per Befehl: {"rig":{...}} (siehe oben), danach {"mode":"rig"} und „Bild“.\n' +
+    'Mesh-Bearbeitung, Skulptur und Textur laufen ebenfalls per Befehl (edit, sculpt, paint). Typischer Ablauf für ein Teil: Körper anlegen, Fläche wählen und extrudieren/einsetzen, Kantenschleife einfügen, Details skulptieren, Textur erzeugen, dann Bild zeigen und exportieren.\n' +
     'Export: Modus „Export“ → Format (Unity C#, Unreal C++, Godot, C++/OpenGL, C++ Array, Blender-Python, three.js, OBJ, STL, glTF, GLB) → „Erzeugen“ → „Kopieren“ (oder „Als Datei“, wenn Downloads erlaubt sind).\n' +
     'Einheiten: 1 Einheit = 1 Meter, Y oben, rechtshändig. Die Szene lässt sich als JSON sichern („Szene als JSON“) und laden.\n' +
     'Beispiele zum Vorführen: {"scene":"rtw"} (Rettungswagen, über 160.000 Dreiecke), {"scene":"city"} (Stadt aus Kartendaten), {"scene":"scan"} (Foto-Scanner-Demo), {"scene":"rig"} (animierte Kette).\n';
@@ -4869,6 +5277,8 @@ UI.help = function (on) {
     h('h3', { text: 'Typische Wege' }),
     h('ul', null,
       li(h('b', { text: 'CAD: ' }), 'Zwei Körper wählen → „A − B“ für ein Loch. Oder Skizze zeichnen → extrudieren oder drehen.'),
+      li(h('b', { text: 'Mesh: ' }), 'Modus „Mesh“ → Röntgen an → Rahmen um die Punkte einer Fläche ziehen → „Extrudieren“, „Einsetzen“ oder „Fase“. Für eine Tasche erst „Einsetzen“, dann negativ extrudieren. „Kantenschleife“ teilt das Netz an einer Ebene.'),
+      li(h('b', { text: 'Per KI-Befehl: ' }), 'Dieselben Werkzeuge gibt es als JSON-Befehle (edit, sculpt, paint, rig). Knopf „Anleitung für Sprachmodell kopieren“ weiter unten in dieser Hilfe.'),
       li(h('b', { text: 'Sculpt: ' }), 'Kugel wählen → Modus „Sculpt“ → Pinsel ziehen. Vorher „Unterteilen“.'),
       li(h('b', { text: 'Textur: ' }), 'Objekt wählen → Modus „Textur“ → „Dem Objekt zuweisen“ → direkt am Modell malen.'),
       li(h('b', { text: 'Rig: ' }), 'Vorlage „Mensch“ oder „Kette“ → Objekt wählen → „Binden“ → Knochen drehen → Keys setzen.'),
@@ -4926,6 +5336,11 @@ UI.keys = function () {
   F.say('Bereit. Oben den Modus wählen, links Objekte hinzufügen. Unter „Hilfe“ steht die Kurzanleitung.', '', true);
 })();
 
+  }
+  if (window.__FW_OFFLINE && window.THREE) { /* Offline-Fassung: three.js ist schon eingebettet */
+    try { start(); var l0 = document.getElementById('loading'); if (l0) l0.hidden = true; }
+    catch (e) { console.error(e); fail('Start fehlgeschlagen: ' + (e && e.message ? e.message : e) + (/WebGL/i.test(String(e && e.message)) ? ' – WebGL ist in diesem Fenster nicht verfügbar.' : '')); }
+    return;
   }
   load(CORE, function (ok) {
     if (!ok || !window.THREE) return fail('Die 3D-Bibliothek (three.js) konnte nicht geladen werden. Dieses Fenster blockiert vermutlich externe Skripte.');

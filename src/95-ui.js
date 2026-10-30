@@ -248,7 +248,7 @@ UI.panels.cad = function (box) {
 };
 
 /* ----- Mesh (Punktbearbeitung) ----- */
-let nudge = 0.1, smoothIt = 2, subIt = 1, smoothLam = 0.5;
+let nudge = 0.1, smoothIt = 2, subIt = 1, smoothLam = 0.5, exAmt = 0.2, inAmt = 0.1, mgDist = 0.02, lcAxis = 'y', lcN = 1;
 UI.panels.edit = function (box) {
   const o = E_.obj;
   box.append(
@@ -263,11 +263,26 @@ UI.panels.edit = function (box) {
     sec('Auswahl formen',
       rng('Entlang Normale (m)', nudge, -1, 1, 0.01, n => nudge = n), row(btn('Anwenden', () => E_.nudge(nudge), { cls: 'sm pri' })),
       rng('Glätten (Durchgänge)', smoothIt, 1, 20, 1, n => smoothIt = n, x => String(x)), row(btn('Auswahl glätten', () => E_.smoothSel(smoothIt), { cls: 'sm' }))),
+    sec('Flächen bearbeiten',
+      hint('Wirkt auf alle Dreiecke, deren drei Punkte gewählt sind (Röntgen einschalten, Rahmen um die Fläche ziehen). Tasche: erst Einsetzen, dann negativ Extrudieren.'),
+      rng('Extrudieren (m)', exAmt, -2, 2, 0.01, n => exAmt = n), row(btn('Extrudieren', () => UI.meshop({ op: 'extrude', amount: exAmt }, 'Extrudieren'), { cls: 'sm pri' })),
+      rng('Einsetzen / Fase (m)', inAmt, 0.005, 1, 0.005, n => inAmt = n), row(btn('Einsetzen', () => UI.meshop({ op: 'inset', amount: inAmt }, 'Einsetzen'), { cls: 'sm' }), btn('Fase', () => UI.meshop({ op: 'fase', amount: inAmt }, 'Fase'), { cls: 'sm', title: 'Schrägt den Rand der Auswahl ab' })),
+      row(btn('Löschen', () => UI.meshop({ op: 'delete' }, 'Löschen'), { cls: 'sm', title: 'Entfernt alle Dreiecke, die einen gewählten Punkt berühren' }), btn('Abtrennen', () => UI.meshop({ op: 'separate' }, 'Abtrennen'), { cls: 'sm', title: 'Macht aus der Auswahl ein eigenes Objekt' }), btn('Kopieren', () => UI.meshop({ op: 'copy' }, 'Kopieren'), { cls: 'sm', title: 'Kopiert die Auswahl als neues Objekt' })),
+      rng('Verschmelzen bis Abstand (m)', mgDist, 0.001, 0.5, 0.001, n => mgDist = n), row(btn('Zur Mitte', () => UI.meshop({ op: 'merge', mode: 'center' }, 'Verschmelzen'), { cls: 'sm' }), btn('Nach Abstand', () => UI.meshop({ op: 'merge', mode: 'distance', distance: mgDist }, 'Verschmelzen'), { cls: 'sm' }))),
+    sec('Kantenschleife',
+      hint('Schneidet das Netz an einer Ebene auf (Dreiecke werden geteilt). Danach lassen sich die neuen Punkte wählen und bewegen.'),
+      row(selIn([['x', 'X'], ['y', 'Y'], ['z', 'Z']], lcAxis, v => lcAxis = v), h('span', { class: 'grow' }, numIn(lcN, { step: 1, min: 1, max: 32, int: true }, v => lcN = v)), btn('Einfügen', () => UI.meshop({ op: 'loopcut', axis: lcAxis, count: lcN }, 'Kantenschleife'), { cls: 'sm pri' }))),
     sec('Ganzes Objekt',
       row(btn('Unterteilen (Loop)', () => UI.subdivide('loop'), { cls: 'sm', title: 'Rundet ab, vervierfacht Dreiecke' }), btn('Unterteilen (flach)', () => UI.subdivide('flat'), { cls: 'sm', title: 'Behält die Form' })),
       rng('Laplace-Glättung', smoothLam, 0.1, 0.9, 0.05, n => smoothLam = n), row(btn('Objekt glätten', () => { const ob = E_.obj; if (!ob) return; const keep = ob; E_.leave(); geoOp('Glätten', x => F.geo.smooth(x.geometry, 2, smoothLam)); E_.enter(keep); }, { cls: 'sm' })),
       row(btn('UV erzeugen (Box)', () => PT_.ensureUV('box'), { cls: 'sm' }), btn('Kugel', () => PT_.ensureUV('sphere'), { cls: 'sm' }), btn('Zylinder', () => PT_.ensureUV('cylinder'), { cls: 'sm' }), btn('Planar', () => PT_.ensureUV('planar'), { cls: 'sm' }))));
   setTimeout(UI.refreshEdit, 0);
+};
+UI.meshop = function (c, label) {
+  const ob = E_.obj; if (!ob) return; c = Object.assign({}, c);
+  if (c.op !== 'loopcut') { if (!E_.sel.size) return F.say('Zuerst Punkte auswählen', 'err'); c.keys = E_.selKeys(); if (c.op === 'delete') c.any = true; }
+  try { const r = F.meshEdit(ob, c); E_.leave(); E_.enter(ob); if (r.keys && r.keys.size) E_.selectKeys(r.keys); F.say(label + ': ' + r.info); }
+  catch (e) { F.say(label + ' fehlgeschlagen: ' + e.message, 'err'); }
 };
 UI.subdivide = function (kind) {
   const ob = E_.obj; if (!ob) return; if (F.geo.stats(ob.geometry).tris * 4 > 400000) return F.say('Mesh ist bereits sehr fein', 'err');

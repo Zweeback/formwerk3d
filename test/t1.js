@@ -1,5 +1,5 @@
 const path=require('path'),fs=require('fs');
-global.THREE=require('../pkg/node_modules/three/build/three.cjs');
+global.THREE=require('../node_modules/three/build/three.cjs');
 global.window=global;
 const src=['00-core','10-csg','20-geo'].map(f=>fs.readFileSync(path.join(__dirname,'../src',f+'.js'),'utf8')).join('\n');
 const F=new Function(src+'\nreturn F;')();

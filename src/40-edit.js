@@ -79,6 +79,8 @@ E.neighbors = function () {
   }
   return (E.nb = nb);
 };
+E.selKeys = function () { const pos = E.obj.geometry.attributes.position, s = new Set(), key = F.meshops.key; E.sel.forEach(i => { const k = E.groups[i].idx[0]; s.add(key(pos.getX(k), pos.getY(k), pos.getZ(k))); }); return s; };
+E.selectKeys = function (keys) { const pos = E.obj.geometry.attributes.position, key = F.meshops.key; E.sel.clear(); E.groups.forEach((g, i) => { const k = g.idx[0]; if (keys.has(key(pos.getX(k), pos.getY(k), pos.getZ(k)))) E.sel.add(i); }); E.colorPts(); };
 E.selectAll = () => { for (let i = 0; i < E.groups.length; i++) E.sel.add(i); E.colorPts(); };
 E.selectNone = () => { E.sel.clear(); E.colorPts(); };
 E.invert = () => { const n = new Set(); for (let i = 0; i < E.groups.length; i++) if (!E.sel.has(i)) n.add(i); E.sel = n; E.colorPts(); };
@@ -193,7 +195,7 @@ const FALL = { smooth: t => (1 - t * t) * (1 - t * t), linear: t => 1 - t, sharp
 K.ready = function (obj) {
   if (!obj || !obj.isMesh || obj.isSkinnedMesh) { F.say('Bitte ein normales Mesh auswählen', 'err'); return false; }
   K.obj = obj;
-  if (!obj.userData.sculpt) {
+  if (!obj.userData.sculpt || !obj.geometry.index) { /* auch nach Rückgängig (Geometrie wieder unverschweißt) neu vorbereiten */
     const g = G.weld(obj.geometry, false); obj.userData.sculpt = true; V.setGeometry(obj, g, 'Für Skulptur vorbereiten', 'mesh', null);
     F.say('Mesh für Skulptur vorbereitet (Punkte verschweißt, UVs entfernt)');
   }

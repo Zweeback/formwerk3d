@@ -1,6 +1,6 @@
 // Rettungswagen: Karosserie ohne DOM erzeugen, Dreiecke zählen, Silhouetten als PNG
 const fs = require('fs'), path = require('path');
-global.THREE = require('../pkg/node_modules/three/build/three.cjs');
+global.THREE = require('../node_modules/three/build/three.cjs');
 global.F = {}; global.clamp = (v, a, b) => Math.min(b, Math.max(a, v)); global.DEG = Math.PI / 180; global.smooth01 = t => { t = clamp(t, 0, 1); return t * t * (3 - 2 * t); };
 const load = f => (0, eval)(fs.readFileSync(path.join(__dirname, '../src', f), 'utf8').replace(/^F\.(geo|vox|vehicle) =/m, 'global.F.$1 ='));
 load('20-geo.js'); load('85-vox.js'); load('87-vehicle.js');

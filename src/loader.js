@@ -19,6 +19,11 @@
   function start() {
 /*MODULES*/
   }
+  if (window.__FW_OFFLINE && window.THREE) { /* Offline-Fassung: three.js ist schon eingebettet */
+    try { start(); var l0 = document.getElementById('loading'); if (l0) l0.hidden = true; }
+    catch (e) { console.error(e); fail('Start fehlgeschlagen: ' + (e && e.message ? e.message : e) + (/WebGL/i.test(String(e && e.message)) ? ' – WebGL ist in diesem Fenster nicht verfügbar.' : '')); }
+    return;
+  }
   load(CORE, function (ok) {
     if (!ok || !window.THREE) return fail('Die 3D-Bibliothek (three.js) konnte nicht geladen werden. Dieses Fenster blockiert vermutlich externe Skripte.');
     msg('Lade Werkzeuge …'); var pending = ADD.length, missing = [];

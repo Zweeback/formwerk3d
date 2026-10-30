@@ -2,14 +2,17 @@
 
 3D-Viewer und Editor in **einer einzigen HTML-Datei** – gemacht zum Einfügen in KI-Chats, läuft aber genauso lokal im Browser (kein Server, keine Anmeldung, alle Daten bleiben auf dem Gerät).
 
-**Datei zum Benutzen:** `dist/formwerk3d.min.html` (≈ 309 KB). Im Chat-Fenster einer KI: `dist/formwerk3d.artifact.min.html` (ohne Doctype/head/body, für Artefakt-Fenster).
+**Dateien:**
+- `dist/formwerk3d.min.html` (≈ 333 KB): zum Öffnen im Browser, lädt three.js aus dem Netz.
+- `dist/formwerk3d.offline.html` (≈ 1,5 MB): komplett offline, three.js und Zusatzmodule sind eingebettet, keine Netzanfragen.
+- `dist/formwerk3d.artifact.min.html`: für Artefakt-Fenster in KI-Chats (ohne Doctype/head/body).
 
 ## Was drin ist
 
 | Bereich | Inhalt |
 |---|---|
 | **CAD** | Parametrische Körper, Boolesche Operationen (Vereinigen/Abziehen/Schneiden), Skizze → Extrusion / Drehkörper, Messen, Spiegeln, Array, Shell |
-| **Mesh** | Punkte auswählen (Rahmen, alle/keine/umkehren/erweitern), verschieben/drehen/skalieren mit weichem Abfall, Auswahl glätten, Unterteilen (Loop/flach), UV-Projektion (Box, Planar, Kugel, Zylinder), Vereinfachen |
+| **Mesh** | Punkte auswählen (Rahmen, alle/keine/umkehren/erweitern), verschieben/drehen/skalieren mit weichem Abfall, Auswahl glätten. Flächen: **Extrudieren, Einsetzen, Fase, Löschen, Abtrennen, Kopieren, Verschmelzen, Kantenschleife**. Unterteilen (Loop/flach), UV-Projektion (Box, Planar, Kugel, Zylinder), Vereinfachen |
 | **Sculpt** | Pinsel Aufbauen, Aufblasen, Glätten, Kneifen, Planieren, Greifen; Radius, Stärke, Abfall, Symmetrie |
 | **Textur-Studio** | Ebenen, Pinsel, Filter, Generatoren, direktes Malen auf dem 3D-Modell |
 | **Rigging** | Knochen, Auto-Gewichte, Pose, Keyframes, IK (CCD) |
@@ -23,10 +26,11 @@ Einheiten: 1 Einheit = 1 Meter, Y oben, rechtshändig.
 
 ## Bekannte Grenzen
 
-- **Mesh-Modus** arbeitet auf Punkten. Es gibt (noch) kein Extrudieren von Flächen, keinen Loop-Schnitt, kein Bevel, kein Messer.
+- **Mesh-Modus** arbeitet auf Dreiecken ohne Quad-Topologie. Kantenschleifen sind Ebenenschnitte (achsparallel), Fase gilt für den Rand einer gewählten Fläche, nicht für einzelne Kanten. Kein freies Messer, keine Brücke, kein Kantenfluss-Werkzeug.
+- **Negatives Extrudieren** direkt am Außenrand erzeugt überlappende Flächen (wie in Blender). Für Taschen erst „Einsetzen“, dann negativ extrudieren.
 - **Booleans** rechnen auf Dreiecksnetzen (BSP). Keine exakte B-Rep-Geometrie, kein STEP/DXF, keine Skizzen-Constraints, keine Verlaufsliste.
-- **Sculpt** ohne Dynamic Topology und ohne Maskierung.
-- Die Seite lädt three.js und Schriften aus dem Netz (CDN). Offline nur mit lokal eingebundener Kopie.
+- **Sculpt** ohne Dynamic Topology und ohne Maskierung; per Befehl gibt es fünf Pinsel (kein Greifen).
+- Die Fassungen außer `formwerk3d.offline.html` laden three.js und Schriften aus dem Netz (CDN).
 - Echte Fotos und echte VRM-/Splat-/LAS-Dateien wurden nur mit selbst erzeugten Testdateien geprüft.
 
 ## Ehrlich zum Foto-Scanner
@@ -43,6 +47,15 @@ Formwerk3D.manual()      // komplette Anleitung als Text
 Formwerk3D.llmPrompt()   // Kurzfassung mit allen Befehlen
 Formwerk3D.run('[{"add":"box","w":2,"h":1,"d":1}]')   // JSON-Befehle (oder Skript) ausführen
 Formwerk3D.api.screenshot()                            // Bild der Ansicht als Data-URL
+```
+
+Weitere Befehle für die KI (Details in `Formwerk3D.manual()`):
+
+```json
+{"edit":"Block","select":{"normal":[0,1,0]},"op":"extrude","amount":0.3}
+{"sculpt":"Kugel","brush":"inflate","top":[0,0],"radius":0.4,"repeat":3}
+{"paint":"Wand","generate":{"name":"bricks","a":10},"text":{"text":"RTW","x":512,"y":300}}
+{"rig":{"preset":"humanoid"}}
 ```
 
 Ohne Seitenzugriff der KI: Der Nutzer fügt die Befehle im Modus „Export“ unter „Skript & Befehle“ ein und drückt „Ausführen“. Der Knopf **„Bild“** oben erzeugt ein Bild der aktuellen Ansicht zum Kopieren – so lässt sich das Ergebnis im Chat zeigen.
@@ -66,7 +79,7 @@ Hinweis: In manchen Chat-Fenstern sind Downloads und Skripte gesperrt. Dann funk
 
 ```bash
 npm install          # terser, three, jsdom, playwright
-node build.js        # schreibt dist/formwerk3d{,.min}{,.artifact}.html
+node build.js        # schreibt dist/formwerk3d{,.min,.artifact,.artifact.min,.offline}.html
 ```
 
 Der Quelltext liegt in `src/` als nummerierte Module (`00-core.js` … `99-boot.js`), `build.js` fügt sie zu einer Datei zusammen. three.js (r147) wird zur Laufzeit per CDN nachgeladen (cdnjs, jsDelivr, unpkg).

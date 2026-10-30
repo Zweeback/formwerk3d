@@ -1,5 +1,5 @@
 const { chromium } = require('playwright'); const fs = require('fs'), path = require('path');
-const TH = path.join(__dirname, '../pkg/node_modules/three');
+const TH = path.join(__dirname, '../node_modules/three');
 const frag = fs.readFileSync(path.join(__dirname, '../dist/formwerk3d.artifact.min.html'), 'utf8');
 const page_html = '<!doctype html><html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"><style>:root{color-scheme:light}body{margin:0;font:14px system-ui}[hidden]{display:none!important}</style></head><body>' + frag + '</body></html>';
 (async () => {

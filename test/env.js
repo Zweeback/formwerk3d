@@ -1,6 +1,6 @@
 // Testumgebung: jsdom + node-canvas + Fake-WebGL
 const fs = require('fs'), path = require('path');
-const { JSDOM } = require('../pkg/node_modules/jsdom');
+const { JSDOM } = require('../node_modules/jsdom');
 const root = path.join(__dirname, '..');
 module.exports = function makeEnv(opts) {
   opts = opts || {};
@@ -16,8 +16,8 @@ module.exports = function makeEnv(opts) {
   Object.defineProperty(w.HTMLElement.prototype, 'clientWidth', { get() { return 800; } }); Object.defineProperty(w.HTMLElement.prototype, 'clientHeight', { get() { return 600; } });
   w.HTMLElement.prototype.setPointerCapture = function () { }; w.HTMLElement.prototype.releasePointerCapture = function () { };
   w.Element.prototype.setPointerCapture = function () { };
-  w.eval(fs.readFileSync(path.join(root, 'pkg/node_modules/three/build/three.min.js'), 'utf8'));
-  ['controls/OrbitControls', 'controls/TransformControls', 'exporters/GLTFExporter', 'loaders/GLTFLoader', 'loaders/OBJLoader', 'loaders/STLLoader'].forEach(f => w.eval(fs.readFileSync(path.join(root, 'pkg/node_modules/three/examples/js/' + f + '.js'), 'utf8')));
+  w.eval(fs.readFileSync(path.join(root, 'node_modules/three/build/three.min.js'), 'utf8'));
+  ['controls/OrbitControls', 'controls/TransformControls', 'exporters/GLTFExporter', 'loaders/GLTFLoader', 'loaders/OBJLoader', 'loaders/STLLoader'].forEach(f => w.eval(fs.readFileSync(path.join(root, 'node_modules/three/examples/js/' + f + '.js'), 'utf8')));
   w.THREE.WebGLRenderer = class { constructor() { this.domElement = w.document.createElement('canvas'); this.domElement.width = 800; this.domElement.height = 600; this.renders = 0; this.shadowMap = {}; } setPixelRatio() { } setSize() { } render() { this.renders++; } dispose() { } };
   w.TextDecoder = w.TextDecoder || require('util').TextDecoder; w.TextEncoder = w.TextEncoder || require('util').TextEncoder;
   const mods = fs.readFileSync(path.join(root, 'dist/modules.js'), 'utf8');

@@ -20,5 +20,15 @@ const loader = R('loader.js'), body = R('body.html'), head = R('head.html');
   const standalone = (h, b, js) => '<!doctype html>\n<html lang="de">\n<head>\n<meta charset="utf-8">\n<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">\n' + h + '\n</head>\n<body>\n' + b + '\n<script>\n' + js + '\n</script>\n</body>\n</html>\n';
   fs.writeFileSync('dist/formwerk3d.html', standalone(head, body, joined));
   fs.writeFileSync('dist/formwerk3d.min.html', standalone(headMin, bodyMin, min.code));
+  // Offline-Fassung: three.js und Zusatzmodule eingebettet, keine Schriften aus dem Netz
+  let TH; try { TH = path.dirname(require.resolve('three/package.json')); } catch (e) { TH = path.join(__dirname, 'pkg/node_modules/three'); }
+  if (fs.existsSync(path.join(TH, 'build/three.min.js'))) {
+    const inl = f => fs.readFileSync(f, 'utf8').replace(/<\/script/gi, '<\\/script');
+    const addons = [...loader.matchAll(/\['([^']+\.js)', *\d\]/g)].map(m => m[1]);
+    const pre = '<script>window.__FW_OFFLINE=1;</script>\n<script>' + inl(path.join(TH, 'build/three.min.js')) + '</script>\n' + addons.map(a => '<script>' + inl(path.join(TH, 'examples/js', a)) + '</script>').join('\n') + '\n';
+    const headOff = headMin.replace(/<link[^>]*fonts\.(?:googleapis|gstatic)[^>]*>\s*/g, '');
+    fs.writeFileSync('dist/formwerk3d.offline.html', standalone(headOff, bodyMin + '\n' + pre, min.code));
+    console.log('formwerk3d.offline.html', (fs.statSync('dist/formwerk3d.offline.html').size / 1024).toFixed(1) + ' KB, ' + addons.length + ' Zusatzmodule');
+  } else console.log('three nicht gefunden: Offline-Fassung übersprungen');
   for (const f of ['formwerk3d.html', 'formwerk3d.min.html', 'formwerk3d.artifact.html', 'formwerk3d.artifact.min.html']) console.log(f, (fs.statSync('dist/' + f).size / 1024).toFixed(1) + ' KB');
 })();

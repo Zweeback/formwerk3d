@@ -1,5 +1,5 @@
 const { chromium } = require('playwright'); const fs = require('fs'), path = require('path');
-const TH = (() => { try { return path.dirname(require.resolve('three/package.json')); } catch (e) { return path.join(__dirname, '../pkg/node_modules/three'); } })();
+const TH = (() => { try { return path.dirname(require.resolve('three/package.json')); } catch (e) { return path.join(__dirname, '../node_modules/three'); } })();
 exports.open = async function (opts) {
   opts = opts || {}; const file = opts.file || '../dist/formwerk3d.artifact.html';
   const frag = fs.readFileSync(path.join(__dirname, file), 'utf8');

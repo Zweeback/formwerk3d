@@ -28,6 +28,20 @@ UI.boolean = function (op) {
   try { F.boolean(op, S.sel[0], S.sel[1], cadKeep); } catch (e) { F.say(e.message, 'err'); }
 };
 
+/* Mesh-Operation auf ein Objekt anwenden (Oberfläche und KI-Befehl), ein Rückgängig-Schritt */
+F.meshEdit = function (ob, c) {
+  if (!ob || !ob.isMesh) throw new Error('Kein Mesh');
+  if (ob.isSkinnedMesh) throw new Error('Geriggte Meshes lassen sich nicht verformen');
+  const op = String(c.op || '').toLowerCase(), r = F.meshops.run(ob.geometry, c); let part = null;
+  F.group('Mesh: ' + op, () => {
+    if (r.geo) { V.setGeometry(ob, r.geo, 'Mesh: ' + op, 'mesh', null); ob.userData.sculpt = false; }
+    if (r.part) {
+      const mat = ob.material.clone(); mat.userData = Object.assign({}, ob.material.userData);
+      part = V.addMesh(r.part, { name: c.name || (ob.name + ' Teil'), material: mat, position: ob.position.toArray(), rotation: [ob.rotation.x / DEG, ob.rotation.y / DEG, ob.rotation.z / DEG], scale: ob.scale.toArray(), dropToGrid: false, select: false });
+    }
+  });
+  V.refreshAll(); return { obj: ob, part, keys: r.keys, info: r.info };
+};
 const clampR = r => Math.max(0.02, Math.min(0.95, r > 1 ? r / 100 : r));
 F.api = (function () {
   const find = n => {
@@ -78,6 +92,74 @@ F.api = (function () {
   api.deform = (o, kind, amount) => modify(o, 'Verformen', m => { const g = F.geo.plain(m.geometry); F.geo.deform(g, kind, kind === 'taper' ? (+amount || 45) / 100 : +amount || 30); return g; });
   api.merge = (names, name) => { const l = (names || []).map(find); if (l.length < 2) throw new Error('Mindestens zwei Objekte nennen'); V.select(l[0]); l.slice(1).forEach(o => V.select(o, true)); UI.join(); if (name && S.active) S.active.name = V.uniqueName(String(name)); V.refreshAll(); return S.active; };
   api.scene = n => { const k = String(n || 'new'); if (k === 'new') { UI.clearScene(); } else if (k === 'demo') F.demo(); else if (k === 'rtw') F.demoAmbulance(); else if (k === 'city') { UI.clearScene(); F.map.sample(); UI.setMode('map'); } else if (k === 'rig') F.demoRig(); else if (k === 'scan') return F.demoScan(); else throw new Error('Szene: new, demo, rtw, city, rig oder scan'); return true; };
+  api.edit = (o, c) => { const m = find(o), r = F.meshEdit(m, c || {}); F.say('Mesh: ' + r.info); return r.part || m; };
+  /* Skulptur per Befehl: Pinselstriche an Weltpunkten ("at") oder auf der Oberfläche über (x,z) ("top") */
+  api.sculpt = (o, s) => {
+    s = s || {}; const m = find(o), K = F.sculpt; if (!K.ready(m)) throw new Error(F.say.last || 'Mesh lässt sich nicht skulptieren');
+    const brush = s.brush || 'draw'; if (['draw', 'inflate', 'smooth', 'pinch', 'flatten'].indexOf(brush) < 0) throw new Error('Pinsel: draw, inflate, smooth, pinch oder flatten');
+    const keep = { brush: K.brush, radius: K.radius, strength: K.strength, falloff: K.falloff, sym: K.sym, invert: K.invert, obj: K.obj };
+    K.obj = m; K.brush = brush; K.radius = +s.radius || 0.3; K.strength = s.strength === undefined ? 0.5 : +s.strength; K.falloff = s.falloff || 'smooth'; K.sym = !!s.sym; K.invert = !!s.invert;
+    m.updateMatrixWorld(true); const pts = [], list = v => v ? (Array.isArray(v[0]) ? v : [v]) : [];
+    list(s.at).forEach(p => pts.push(new THREE.Vector3(+p[0], +p[1], +p[2])));
+    list(s.top).forEach(p => { const h = new THREE.Raycaster(new THREE.Vector3(+p[0], 1000, +p[1]), new THREE.Vector3(0, -1, 0)).intersectObject(m, false)[0]; if (h) pts.push(h.point.clone()); });
+    if (Array.isArray(s.line) && s.line.length > 1) for (let i = 0; i + 1 < s.line.length; i++) { const a = new THREE.Vector3(...s.line[i]), b = new THREE.Vector3(...s.line[i + 1]), n = Math.max(1, Math.ceil(a.distanceTo(b) / (K.radius * 0.25))); for (let k = 0; k <= n; k++) pts.push(a.clone().lerp(b, k / n)); }
+    if (!pts.length) { Object.assign(K, keep); throw new Error('Sculpt: "at" [x,y,z], "top" [x,z] oder "line" angeben'); }
+    const g = m.geometry, pos = g.attributes.position, old = Float32Array.from(pos.array), reps = Math.max(1, Math.min(40, (s.repeat | 0) || 1)), up = new THREE.Vector3(0, 1, 0);
+    try { pts.forEach(pw => { const p = m.worldToLocal(pw.clone()); for (let r = 0; r < reps; r++) { K.dab(p, up); if (K.sym) { const pm = p.clone(); pm.x = -pm.x; K.dab(pm, up); } } }); }
+    finally { Object.assign(K, keep); }
+    g.computeVertexNormals(); g.computeBoundingSphere(); g.computeBoundingBox(); V.setPositionsUndo(m, old, Float32Array.from(pos.array), 'Skulptur'); V.refreshAll(); F.say('Skulptur: ' + pts.length + ' Punkt' + (pts.length === 1 ? '' : 'e') + ' × ' + reps); return m;
+  };
+  /* Textur per Befehl: Ebene füllen, Generator, Verlauf, Filter, Formen, Text, dann dem Objekt zuweisen */
+  api.paint = (o, s) => {
+    s = s || {}; const m = find(o), P = F.paint; V.select(m);
+    const hasUV = g => { const u = g.attributes.uv; if (!u) return false; const n = Math.min(u.count, 4000); for (let i = 0; i < n; i++) if (u.getX(i) || u.getY(i)) return true; return false; };
+    if (s.uv || !hasUV(m.geometry)) P.ensureUV(s.uv && s.uv !== true ? String(s.uv) : 'box');
+    const slot = s.slot || 'map'; if (!P.SLOTS[slot]) throw new Error('Slot: ' + Object.keys(P.SLOTS).join(', '));
+    if (s.size && !P.docs[slot]) P.size = Math.max(64, Math.min(4096, s.size | 0));
+    P.slot = slot; const d = P.doc(slot), W = d.size, keepC = [P.color, P.color2];
+    try {
+      if (s.color) P.color = String(s.color); if (s.color2) P.color2 = String(s.color2);
+      if (s.layer === 'new') P.layerOp('add');
+      const l = P.layer(), hexOk = c => /^#[0-9a-f]{6}$/i.test(c);
+      if (s.fill) { if (!hexOk(s.fill)) throw new Error('fill: Farbe als "#rrggbb"'); P.snap(); l.ctx.fillStyle = s.fill; l.ctx.fillRect(0, 0, W, W); }
+      if (s.generate) { const g = typeof s.generate === 'string' ? { name: s.generate } : s.generate; if (!P.GENS[g.name]) throw new Error('Generator: ' + Object.keys(P.GENS).join(', ')); if (g.color) P.color = g.color; if (g.color2) P.color2 = g.color2; P.generate(g.name, g.a === undefined ? P.GENS[g.name].a[3] : +g.a); }
+      if (s.gradient) { P.color = s.gradient[0]; P.color2 = s.gradient[1]; P.shape('gradient', { x: 0, y: 0 }, { x: 0, y: W }); }
+      (s.filters || (s.filter ? [s.filter] : [])).forEach(f => { const g = typeof f === 'string' ? { name: f } : f; if (!P.FILTERS[g.name]) throw new Error('Filter: ' + Object.keys(P.FILTERS).join(', ')); const F0 = P.FILTERS[g.name]; P.applyFilter(g.name, g.a === undefined && F0.a ? F0.a[3] : g.a, g.b === undefined && F0.b ? F0.b[3] : g.b); });
+      (s.shapes || []).forEach(sh => {
+        if (sh.color) P.color = sh.color; const keepOp = P.brush.opacity, keepFill = P.fillShape; P.brush.opacity = sh.opacity === undefined ? 1 : +sh.opacity; P.fillShape = sh.stroke ? false : true; if (sh.width) P.brush.size = (+sh.width - 1) * 4;
+        try { if (sh.rect) P.shape('rect', { x: +sh.rect[0], y: +sh.rect[1] }, { x: +sh.rect[2], y: +sh.rect[3] }); else if (sh.ellipse) P.shape('ellipse', { x: +sh.ellipse[0], y: +sh.ellipse[1] }, { x: +sh.ellipse[2], y: +sh.ellipse[3] }); else if (sh.line) P.shape('line', { x: +sh.line[0], y: +sh.line[1] }, { x: +sh.line[2], y: +sh.line[3] }); } finally { P.brush.opacity = keepOp; P.fillShape = keepFill; }
+      });
+      (s.texts || (s.text ? [s.text] : [])).forEach(t => {
+        P.snap(); const c = P.layer().ctx; c.save(); c.fillStyle = t.color || P.color; c.font = (t.bold === false ? '' : 'bold ') + Math.round(+t.size || W / 8) + 'px ' + (t.font || 'sans-serif'); c.textAlign = t.align || 'center'; c.textBaseline = 'middle';
+        if (t.rotate) { c.translate(+t.x, +t.y); c.rotate(t.rotate * DEG); c.fillText(String(t.text), 0, 0); } else c.fillText(String(t.text), +t.x, +t.y); c.restore(); P.compose();
+      });
+    } finally { P.color = keepC[0]; P.color2 = keepC[1]; }
+    P.assign(slot, true); if (s.rough !== undefined) m.material.roughness = +s.rough; if (s.metal !== undefined) m.material.metalness = +s.metal; m.material.needsUpdate = true;
+    V.refreshAll(); F.say('Textur (' + P.SLOTS[slot] + ') auf ' + m.name); return m;
+  };
+  /* Rigging per Befehl: Vorlage oder eigene Knochen, Binden, Pose, Keys, Abspielen */
+  api.rig = s => {
+    s = s || {}; const RG = F.rig, q = new THREE.Quaternion(), e = new THREE.Euler();
+    const bone = n => { const b = RG.bones.find(x => x.name === n) || RG.bones.find(x => x.name.toLowerCase() === String(n).toLowerCase()); if (!b) throw new Error('Knochen nicht gefunden: ' + n + ' (vorhanden: ' + RG.bones.map(x => x.name).join(', ') + ')'); return b; };
+    const applyPose = pz => { RG.resetPose(); Object.keys(pz || {}).forEach(n => { const b = bone(n), r = RG.rest.get(b) || { q: new THREE.Quaternion() }, v = pz[n]; e.set(v[0] * DEG, v[1] * DEG, v[2] * DEG); q.setFromEuler(e); b.quaternion.copy(r.q).multiply(q); }); RG.root.updateMatrixWorld(true); V.requestRender(); };
+    if (s.clear) RG.clearAll();
+    if (s.preset) { if (['humanoid', 'arm', 'chain'].indexOf(s.preset) < 0) throw new Error('Vorlage: humanoid, arm oder chain'); RG.preset(s.preset, s.n); }
+    if (Array.isArray(s.bones)) {
+      if (RG.skeleton) RG.unbind(true); if (s.replace) RG.clearAll(); RG.setMode('edit'); const by = {}; RG.bones.forEach(b => by[b.name] = b);
+      s.bones.forEach(d => { const par = d.parent ? by[d.parent] : null; if (d.parent && !par) throw new Error('Eltern-Knochen nicht gefunden: ' + d.parent); by[d.name] = RG.addBone(d.name, new THREE.Vector3(...vec(d.pos, [0, 0, 0])), par); });
+      RG.saveRest(); RG.select(RG.bones[0]);
+    }
+    if (s.bind !== undefined) { const sm = RG.bind(find(s.bind), s.sharp); if (!sm) throw new Error(F.say.last || 'Binden fehlgeschlagen'); }
+    if (s.unbind) RG.unbind();
+    if (s.pose) { RG.setMode('pose'); applyPose(s.pose); }
+    if (s.reset) RG.resetPose();
+    if (s.duration) RG.duration = Math.max(0.1, +s.duration);
+    if (s.loop !== undefined) RG.loop = !!s.loop;
+    if (Array.isArray(s.keys)) { if (!RG.bones.length) throw new Error('Keine Knochen vorhanden'); RG.setMode('pose'); RG.keys = []; s.keys.forEach(k => { applyPose(k.pose); RG.setKey(+k.t || 0); }); RG.seek(0); }
+    if (s.time !== undefined) RG.seek(+s.time);
+    if (s.play !== undefined) RG.play(!!s.play);
+    V.refreshAll(); F.say('Rig: ' + RG.bones.length + ' Knochen, ' + RG.keys.length + ' Key' + (RG.keys.length === 1 ? '' : 's') + (RG.skeleton ? ', gebunden' : '')); return RG.bones.map(b => b.name);
+  };
   api.screenshot = () => V.screenshot();
   api.photo = { simulate: (n, elev, f35) => F.photo.addSimulated({ n: n || 24, elev: elev === undefined ? 22 : elev, f35: f35 || 30 }), build: o => { Object.assign(F.photo.cfg, o || {}); return F.photo.build(); }, clear: () => F.photo.clear() };
   api.view = n => V.viewDir(n); api.frame = () => V.frame();
@@ -90,7 +172,11 @@ F.cmd = function (list) {
   const api = F.api; if (!Array.isArray(list)) list = [list]; let n = 0;
   list.forEach((c, i) => {
     try {
-      if (c.add) api.add(c.add, c);
+      if (c.edit) api.edit(c.edit, c);
+      else if (c.sculpt) api.sculpt(c.sculpt, c);
+      else if (c.paint) api.paint(c.paint, c);
+      else if (c.rig) api.rig(c.rig === true ? {} : c.rig);
+      else if (c.add) api.add(c.add, c);
       else if (c.boolean) api.subtract && F.boolean(c.boolean, api.find(c.a), api.find(c.b), !!c.keep, c.name);
       else if (c.set) { const m = api.find(c.set); api.place(m, c); V.refreshAll(); }
       else if (c.delete) api.remove(c.delete);
@@ -141,6 +227,10 @@ F.llmPrompt = function () {
     '{"lathe":{"points":[[0.5,0],[0.6,0.5],[0.3,1.0]],"segments":48,"name":"Vase"}}   // Profil (Radius, Höhe) wird gedreht\n' +
     '{"map": { …GeoJSON oder Overpass-JSON… }}   // Gebäude, Straßen, Wasser, Grün\n' +
     '{"mirror":"Sockel","axis":"x","cut":false}   {"array":"Zaun","count":6,"offset":[0.5,0,0]}   {"shell":"Kugel","thickness":0.03}   {"subdivide":"Block","kind":"loop"}   {"smooth":"Skulptur","iterations":2}   {"decimate":"Scan","ratio":0.3}   {"deform":"Turm","kind":"twist","amount":45}   // twist | taper | bend\n' +
+    '{"edit":"Block","select":{"normal":[0,1,0],"tol":20},"op":"extrude","amount":0.3}   // Mesh-Bearbeitung. op: extrude | inset | fase | delete | separate | copy | move | scale | rotate | merge | loopcut. select: "all" oder {normal:[x,y,z], tol:Grad, axis:"y", min:0.9, max:1, rel:true, box:[[x0,y0,z0],[x1,y1,z1]]} (lokale Koordinaten, rel:true = Anteil 0..1 der Ausdehnung). Tasche: erst inset, dann extrude mit negativem amount. move/scale/rotate: "move":[x,y,z], "soft":Radius für weichen Abfall. loopcut: "axis":"y","count":3. separate/copy: "name"\n' +
+    '{"sculpt":"Kugel","brush":"inflate","top":[0.2,0.1],"radius":0.4,"strength":0.6,"repeat":3}   // Pinsel draw | inflate | smooth | pinch | flatten an einem Weltpunkt "at":[x,y,z], einem Oberflächenpunkt über (x,z) "top":[x,z] oder entlang "line":[[x,y,z],[x,y,z]]; "invert":true, "sym":true. Das Netz braucht genug Dreiecke (vorher subdivide)\n' +
+    '{"paint":"Wand","generate":{"name":"bricks","a":10,"color":"#8a3b2a","color2":"#d9d2c3"},"text":{"text":"RTW","x":512,"y":300,"size":120,"color":"#ffffff"}}   // Textur auf 1024 × 1024 Pixeln: fill "#rrggbb", generate checker | clouds | marble | wood | bricks | uv | ramp, gradient ["#..","#.."], filter noise | blur | invert | gray, shapes [{"rect":[x0,y0,x1,y1],"color":"#.."}] (auch ellipse, line), text; "slot":"map" | "roughnessMap" | "bumpMap"; UVs entstehen automatisch\n' +
+    '{"rig":{"preset":"humanoid"}}  {"rig":{"bind":"Figur"}}  {"rig":{"keys":[{"t":0,"pose":{"UpperArm_L":[0,0,0]}},{"t":1,"pose":{"UpperArm_L":[0,0,70]}}],"duration":1,"play":true}}   // Knochen: preset humanoid | arm | chain, oder "bones":[{"name":"A","pos":[0,1,0]},{"name":"B","pos":[0,1.5,0],"parent":"A"}]; bind bindet ein Mesh mit Auto-Gewichten; Posen als Drehwinkel in Grad je Knochen; keys erzeugt eine Animation\n' +
     '{"merge":["Teil1","Teil2"],"name":"Gruppe"}   {"scene":"rtw"}   // new | demo | rtw (Rettungswagen, über 160.000 Dreiecke) | city | rig | scan (Foto-Scanner-Demo)\n' +
     '{"photo":{"simulate":24,"elev":22,"build":true}}   // Foto-Scanner: Testfotos aus der Szene rendern und daraus ein Modell rechnen\n' +
     '{"mode":"photo"}   // object | cad | edit | sculpt | paint | rig | map | photo | code\n' +
@@ -162,7 +252,8 @@ F.manual = function () {
     'Import (Knopf „Importieren“, oder Dateien ins Fenster ziehen): GLB, glTF, VRM, FBX, OBJ (+MTL, Texturen), DAE, 3DS, 3MF, STL, PLY, ZIP (mit Texturen), Punktwolken (XYZ, PTS, CSV, PCD, LAS), Gaussian Splats (.splat, 3DGS-PLY). Wolken und Splats lassen sich unter „Export → Importieren“ per „In Netz wandeln“ in ein Dreiecksnetz umwandeln. Mehrere Fotos (JPG, PNG, WebP) öffnen den Fotomodus.\n' +
     'Fotomodus (Modus „Foto“): 16 bis 40 Fotos rund um ein Objekt auf einfarbigem Untergrund, der Reihe nach benannt. Der Browser bestimmt Maske, Kamerahöhe und Brennweite, rechnet daraus die Hülle (Sichtkörper) und legt die Fotos als Textur darüber. Alles lokal. Grenzen: keine Mulden/Hohlräume, kein Glas, keine Räume. Ohne eigene Fotos: „Testaufnahmen aus der Szene“ oder Szene „Demo: Foto-Scanner“.\n' +
     'Karten: Modus „Karte“ mit GeoJSON oder Overpass-JSON (Gebäude, Straßen, Wasser, Grün) und optionaler Höhenkarte als Bild → Gelände.\n' +
-    'Rigging: Knochen bauen, Auto-Gewichte, Pose/Animation, Keys; Export als glTF/Unity/Unreal/Godot/Blender.\n' +
+    'Rigging: Knochen bauen, Auto-Gewichte, Pose/Animation, Keys; Export als glTF/Unity/Unreal/Godot/Blender. Per Befehl: {"rig":{...}} (siehe oben), danach {"mode":"rig"} und „Bild“.\n' +
+    'Mesh-Bearbeitung, Skulptur und Textur laufen ebenfalls per Befehl (edit, sculpt, paint). Typischer Ablauf für ein Teil: Körper anlegen, Fläche wählen und extrudieren/einsetzen, Kantenschleife einfügen, Details skulptieren, Textur erzeugen, dann Bild zeigen und exportieren.\n' +
     'Export: Modus „Export“ → Format (Unity C#, Unreal C++, Godot, C++/OpenGL, C++ Array, Blender-Python, three.js, OBJ, STL, glTF, GLB) → „Erzeugen“ → „Kopieren“ (oder „Als Datei“, wenn Downloads erlaubt sind).\n' +
     'Einheiten: 1 Einheit = 1 Meter, Y oben, rechtshändig. Die Szene lässt sich als JSON sichern („Szene als JSON“) und laden.\n' +
     'Beispiele zum Vorführen: {"scene":"rtw"} (Rettungswagen, über 160.000 Dreiecke), {"scene":"city"} (Stadt aus Kartendaten), {"scene":"scan"} (Foto-Scanner-Demo), {"scene":"rig"} (animierte Kette).\n';
@@ -228,6 +319,8 @@ UI.help = function (on) {
     h('h3', { text: 'Typische Wege' }),
     h('ul', null,
       li(h('b', { text: 'CAD: ' }), 'Zwei Körper wählen → „A − B“ für ein Loch. Oder Skizze zeichnen → extrudieren oder drehen.'),
+      li(h('b', { text: 'Mesh: ' }), 'Modus „Mesh“ → Röntgen an → Rahmen um die Punkte einer Fläche ziehen → „Extrudieren“, „Einsetzen“ oder „Fase“. Für eine Tasche erst „Einsetzen“, dann negativ extrudieren. „Kantenschleife“ teilt das Netz an einer Ebene.'),
+      li(h('b', { text: 'Per KI-Befehl: ' }), 'Dieselben Werkzeuge gibt es als JSON-Befehle (edit, sculpt, paint, rig). Knopf „Anleitung für Sprachmodell kopieren“ weiter unten in dieser Hilfe.'),
       li(h('b', { text: 'Sculpt: ' }), 'Kugel wählen → Modus „Sculpt“ → Pinsel ziehen. Vorher „Unterteilen“.'),
       li(h('b', { text: 'Textur: ' }), 'Objekt wählen → Modus „Textur“ → „Dem Objekt zuweisen“ → direkt am Modell malen.'),
       li(h('b', { text: 'Rig: ' }), 'Vorlage „Mensch“ oder „Kette“ → Objekt wählen → „Binden“ → Knochen drehen → Keys setzen.'),
