@@ -9,10 +9,10 @@
 | Bereich | Inhalt |
 |---|---|
 | **CAD** | Parametrische Körper, Boolesche Operationen (Vereinigen/Abziehen/Schneiden), Skizze → Extrusion / Drehkörper, Messen, Spiegeln, Array, Shell |
-| **Mesh** | Punkte/Kanten/Flächen bearbeiten, Extrudieren, Loop-Schnitt, Unterteilen, Glätten, Vereinfachen |
-| **Sculpt** | Pinsel mit Symmetrie, Voxel-Remesh |
-| **Textur-Studio** | Malen auf dem Modell, Ebenen, Pinsel, Füllen |
-| **Rigging** | Knochen, Auto-Gewichte, Pose und Keyframes |
+| **Mesh** | Punkte auswählen (Rahmen, alle/keine/umkehren/erweitern), verschieben/drehen/skalieren mit weichem Abfall, Auswahl glätten, Unterteilen (Loop/flach), UV-Projektion (Box, Planar, Kugel, Zylinder), Vereinfachen |
+| **Sculpt** | Pinsel Aufbauen, Aufblasen, Glätten, Kneifen, Planieren, Greifen; Radius, Stärke, Abfall, Symmetrie |
+| **Textur-Studio** | Ebenen, Pinsel, Filter, Generatoren, direktes Malen auf dem 3D-Modell |
+| **Rigging** | Knochen, Auto-Gewichte, Pose, Keyframes, IK (CCD) |
 | **Karte → 3D** | GeoJSON / Overpass-JSON → Gebäude, Straßen, Wasser, Grün; Höhenbild → Gelände |
 | **Foto-Scanner** | 16–40 Fotos (oder Video) rund um ein Objekt → Hüllenmodell mit Textur, komplett lokal |
 | **Import** | GLB, glTF, VRM, FBX, OBJ (+MTL), DAE, 3DS, 3MF, STL, PLY, ZIP, Punktwolken (XYZ, PTS, CSV, PCD, LAS), Gaussian Splats (`.splat`, 3DGS-PLY) |
@@ -20,6 +20,14 @@
 | **Referenzmodell** | Rettungswagen mit ≈ 164.000 Dreiecken (`{"scene":"rtw"}`) |
 
 Einheiten: 1 Einheit = 1 Meter, Y oben, rechtshändig.
+
+## Bekannte Grenzen
+
+- **Mesh-Modus** arbeitet auf Punkten. Es gibt (noch) kein Extrudieren von Flächen, keinen Loop-Schnitt, kein Bevel, kein Messer.
+- **Booleans** rechnen auf Dreiecksnetzen (BSP). Keine exakte B-Rep-Geometrie, kein STEP/DXF, keine Skizzen-Constraints, keine Verlaufsliste.
+- **Sculpt** ohne Dynamic Topology und ohne Maskierung.
+- Die Seite lädt three.js und Schriften aus dem Netz (CDN). Offline nur mit lokal eingebundener Kopie.
+- Echte Fotos und echte VRM-/Splat-/LAS-Dateien wurden nur mit selbst erzeugten Testdateien geprüft.
 
 ## Ehrlich zum Foto-Scanner
 
