@@ -1,0 +1,11 @@
+const { env, F, w, T, ok, fails } = require('./t2.js');
+const V = F.view;
+F.ui.clearScene(); const b = F.api.box({ w: 1, h: 1, d: 1, color: '#ff8800' });
+const hex = o => F.hex(o.material.color);
+const sr = F.exp.serialize({}); const e0 = sr.objects ? sr.objects[0] : (sr.o || sr.objs)[0];
+console.log('serialisiert:', JSON.stringify(e0.m));
+F.exp.deserialize(JSON.parse(JSON.stringify(sr))); const b2 = V.objects()[0];
+ok(hex(b2) === '#ff8800', 'Farbe nach Roundtrip ' + hex(b2) + ' (soll #ff8800)');
+(async () => { const u = await F.exp.generate('unity', { scope: 'all' }); ok(/new Color\(1f, 0\.5(3|4)\d*f, 0f/.test(u.text) || /new Color\(1f, 0\.\d+f, 0f/.test(u.text), 'Unity-Farbe ' + (u.text.match(/new Color\([^)]*\)/) || [])[0]);
+  const g = await F.exp.generate('gltf', { scope: 'all' }); const gj = JSON.parse(g.text); console.log('glTF baseColor', JSON.stringify(gj.materials[0].pbrMetallicRoughness.baseColorFactor));
+  console.log(fails() ? 'FAILS' : 'ALL OK'); process.exit(fails() ? 1 : 0); })();

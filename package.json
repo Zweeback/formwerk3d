@@ -1,0 +1,7 @@
+{
+  "name": "formwerk3d",
+  "version": "1.0.0",
+  "description": "Formwerk 3D – 3D-Viewer und Editor in einer einzigen HTML-Datei",
+  "scripts": { "build": "node build.js" },
+  "devDependencies": { "terser": "^5.51.2", "three": "0.147.0", "jsdom": "^30.1.3", "playwright": "^1.50.0" }
+}

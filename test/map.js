@@ -1,0 +1,10 @@
+const { env, F, w, T } = require('./t2.js');
+const V = F.view, UI = F.ui;
+UI.clearScene(); F.map.sample();
+console.log('nach sample:', V.objects().map(o => o.name + '(' + F.geo.stats(o.geometry).tris + ')').join(', '));
+UI.clearScene(); F.map.parse(JSON.stringify(F.map.sampleGeoJSON())); F.map.build({ ground: false });
+console.log('nach parse+build:', V.objects().map(o => o.name).join(', '));
+F.map.noiseTerrain({ height: 20, res: 48 }); console.log('nach noise:', V.objects().map(o => o.name).join(', '), 'hm', !!F.map.hm);
+F.map.build({ drape: true }); console.log('nach drape:', V.objects().map(o => o.name).join(', '));
+console.log(env.errs.slice(0, 3));
+process.exit(0);
