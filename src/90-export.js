@@ -322,8 +322,16 @@ X.deserialize = function (d, opt) {
 function addImported(geo, name, mat) {
   if (!geo.attributes.normal) geo.computeVertexNormals(); if (!geo.attributes.uv) geo.setAttribute('uv', new THREE.Float32BufferAttribute(new Float32Array(geo.attributes.position.count * 2), 2));
   Object.keys(geo.attributes).forEach(k => { if (k !== 'position' && k !== 'normal' && k !== 'uv' && k !== 'color') geo.deleteAttribute(k); });
+  geo.morphAttributes = {}; geo.morphTargetsRelative = false; // Morph-Targets (Mimik) werden nicht übernommen; sie würden auch die Hüllbox verfälschen
+  geo.computeBoundingBox(); geo.computeBoundingSphere(); // nach dem Einfrieren der Pose neu rechnen, sonst stimmt „Alles zeigen“ nicht
   const o = V.addMesh(geo, { name: name || 'Import', kind: 'mesh', dropToGrid: false, position: [0, 0, 0], silent: true });
   if (mat) { if (mat.color) o.material.color.copy(mat.color); if (mat.roughness !== undefined) o.material.roughness = mat.roughness; if (mat.metalness !== undefined) o.material.metalness = mat.metalness; if (mat.map) { o.material.map = mat.map; mat.map.encoding = THREE.sRGBEncoding; o.material.needsUpdate = true; } }
+  if (mat) { /* Transparenz (Wimpern, Brauen, Haarkarten) und Normalmap aus der Datei übernehmen */
+    if (mat.alphaTest) o.material.alphaTest = mat.alphaTest;
+    if (mat.transparent) { o.material.userData.alphaBlend = true; o.material.transparent = true; o.material.depthWrite = false; }
+    if (mat.opacity !== undefined && mat.opacity < 1) o.material.userData.opacity = mat.opacity;
+    if (mat.normalMap) { o.material.normalMap = mat.normalMap; if (mat.normalScale) o.material.normalScale.copy(mat.normalScale); o.material.needsUpdate = true; }
+  }
   if (geo.attributes.color) { o.material.vertexColors = true; o.material.needsUpdate = true; }
   o.material.side = THREE.DoubleSide; return o;
 }
@@ -371,7 +379,20 @@ function splitByMaterial(m) {
 function collectParts(root, name) {
   const parts = []; root.updateMatrixWorld(true);
   root.traverse(m => { if (!m.isMesh || !m.geometry || !m.geometry.attributes.position) return; splitByMaterial(m).forEach(p => { p.geo.applyMatrix4(m.matrixWorld); p.name = m.name || name; parts.push(p); }); });
+  /* Teile eines Meshes („Body_1“, „Body_2“ …): Materialname statt Zähler (z. B. „Body · coat“) */
+  const base = p => { const m = /^(.*)_\d+$/.exec(p.name); return m ? m[1] : p.name; }, cnt = {}; parts.forEach(p => cnt[base(p)] = (cnt[base(p)] || 0) + 1);
+  parts.forEach(p => { if (cnt[base(p)] > 1 && p.mat && p.mat.name) p.name = base(p) + ' · ' + p.mat.name; });
   return parts;
+}
+/* Skelett aus Datei (glTF, VRM, FBX) als Knochen im Rig-Modus übernehmen; Rückgabe = Anzahl */
+function importSkeleton(root, flip) {
+  const RG = F.rig, bones = []; root.updateMatrixWorld(true); root.traverse(o => { if (o.isBone) bones.push(o); });
+  if (bones.length < 3) return 0;
+  RG.clearAll(); const map = new Map(), v = new THREE.Vector3();
+  bones.forEach(b => { b.getWorldPosition(v); if (flip) { v.x = -v.x; v.z = -v.z; } let par = b.parent; while (par && !par.isBone) par = par.parent; map.set(b, RG.addBone(b.name || 'Knochen', v.clone(), par ? map.get(par) : null)); });
+  RG.mode = 'edit'; RG.saveRest(); RG.select(RG.bones[0]);
+  if (RG.bones.length > 40) { const bb = new THREE.Box3(); RG.bones.forEach(b => bb.expandByPoint(b.getWorldPosition(v))); RG.setSize(Math.max(0.2, Math.min(1, bb.getSize(new THREE.Vector3()).y / 1.7 * 0.35))); RG.hideOutside = true; RG.syncVis(); }
+  return RG.bones.length;
 }
 /* Einheit: Auswahl im Import-Bereich, sonst bei FBX/3DS schätzen (kommen oft in Zentimetern) */
 function unitFactor(parts, kind) {
@@ -391,7 +412,8 @@ function importParts(parts, label, kind, post) {
 X.importFBX = function (data, name) {
   if (!THREE.FBXLoader) throw new Error('FBXLoader nicht geladen (Bibliothek blockiert?)');
   let grp; try { grp = new THREE.FBXLoader().parse(data, ''); } catch (e) { throw new Error('FBX konnte nicht gelesen werden: ' + (e && e.message ? e.message.replace(/^THREE\.FBXLoader:\s*/, '') : e)); }
-  return importParts(collectParts(grp, name || 'FBX'), name || 'FBX', 'fbx');
+  const r = importParts(collectParts(grp, name || 'FBX'), name || 'FBX', 'fbx'); let nb = 0; try { nb = importSkeleton(grp, false); } catch (e) { console.warn('Skelett nicht übernommen', e); }
+  if (nb) F.say(F.say.last + ' · ' + nb + ' Knochen als Skelett im Rig-Modus (nicht gebunden)'); return r;
 };
 X.importDAE = function (text, name) {
   if (!THREE.ColladaLoader) throw new Error('ColladaLoader nicht geladen (Bibliothek blockiert?)');
@@ -438,7 +460,9 @@ X.importGLTF = function (data, name, opt) { // ArrayBuffer (GLB/VRM) oder Text (
     const run = (b, retry) => new THREE.GLTFLoader().parse(b, '', gl => {
       try {
         const parts = collectParts(gl.scene, name || 'glTF'); if (vrm0) parts.forEach(p => p.geo.rotateY(Math.PI)); // VRM 0.x blickt nach −Z
-        const r = importParts(parts, name || (isVrm ? 'VRM' : 'glTF'), 'gltf'); if (isVrm) F.say(F.say.last + ' · VRM: Haltung wie gespeichert, Skelett, Mimik und Spring-Bones werden nicht übernommen');
+        const r = importParts(parts, name || (isVrm ? 'VRM' : 'glTF'), 'gltf'); let nb = 0; try { nb = importSkeleton(gl.scene, vrm0); } catch (e) { console.warn('Skelett nicht übernommen', e); }
+        if (isVrm) F.say(F.say.last + ' · VRM: Haltung wie gespeichert, ' + (nb ? nb + ' Knochen als Skelett im Rig-Modus (nicht an die Meshes gebunden)' : 'kein Skelett') + ', Mimik und Spring-Bones werden nicht übernommen');
+        else if (nb) F.say(F.say.last + ' · ' + nb + ' Knochen als Skelett im Rig-Modus (nicht gebunden)');
         res(r);
       } catch (e) { rej(e); }
     }, err => {

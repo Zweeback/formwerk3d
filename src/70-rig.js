@@ -56,6 +56,8 @@ RG.refreshViz = function () {
   V.requestRender();
 };
 RG.setSize = function (s) { RG.size = s; RG.refreshViz(); };
+/* Importierte Skelette (viele Knochen) nur im Rig-Modus zeigen, sonst verdecken sie das Modell */
+RG.syncVis = function () { RG.root.visible = S.mode === 'rig' || !RG.hideOutside; V.requestRender(); };
 
 /* ---------- Knochen anlegen / ändern ---------- */
 RG.addBone = function (name, worldPos, parent) {
@@ -71,7 +73,7 @@ RG.remove = function (b) {
   RG.refreshViz(); RG.select(RG.sel);
 };
 RG.clearAll = function () {
-  RG.unbind(true); RG.stopIK(); RG.bones.slice().forEach(b => { if (b.parent === RG.root) RG.root.remove(b); }); RG.bones = []; RG.sel = null; RG.keys = []; RG.time = 0; RG.rest.clear(); RG.refreshViz(); RG.select(null);
+  RG.unbind(true); RG.stopIK(); RG.bones.slice().forEach(b => { if (b.parent === RG.root) RG.root.remove(b); }); RG.bones = []; RG.sel = null; RG.keys = []; RG.time = 0; RG.rest.clear(); RG.hideOutside = false; RG.refreshViz(); RG.select(null);
 };
 RG.select = function (b) {
   RG.sel = b || null; RG.bones.forEach(x => RG.decorate(x)); RG.joints = []; RG.bones.forEach(x => x.children.forEach(c => { if (c.userData.bone) RG.joints.push(c); }));

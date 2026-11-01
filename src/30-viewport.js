@@ -229,7 +229,7 @@ V.replaceObject = function (oldO, newO, label) { // z.B. Mesh -> SkinnedMesh
 V.applyDisplay = function (mesh) {
   const m = mesh.material; if (!m) return;
   const op = m.userData.opacity === undefined ? 1 : m.userData.opacity, xray = S.shading === 'xray';
-  m.transparent = op < 1 || xray; m.opacity = xray ? Math.min(op, 0.38) : op; m.depthWrite = !xray; m.wireframe = S.shading === 'wire';
+  const ab = !!m.userData.alphaBlend; m.transparent = op < 1 || xray || ab; m.opacity = xray ? Math.min(op, 0.38) : op; m.depthWrite = !xray && !ab; m.wireframe = S.shading === 'wire';
   const sel = S.sel.indexOf(mesh) >= 0;
   if (m.emissive) m.emissive.setHex(sel ? 0x3a2300 : 0x000000);
   V.rebuildWire(mesh);

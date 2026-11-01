@@ -31,7 +31,8 @@ Einheiten: 1 Einheit = 1 Meter, Y oben, rechtshändig.
 - **Booleans** rechnen auf Dreiecksnetzen (BSP). Keine exakte B-Rep-Geometrie, kein STEP/DXF, keine Skizzen-Constraints, keine Verlaufsliste.
 - **Sculpt** ohne Dynamic Topology und ohne Maskierung; per Befehl gibt es fünf Pinsel (kein Greifen).
 - Die Fassungen außer `formwerk3d.offline.html` laden three.js und Schriften aus dem Netz (CDN).
-- Echte Fotos und echte VRM-/Splat-/LAS-Dateien wurden nur mit selbst erzeugten Testdateien geprüft.
+- **glTF/VRM-Import** friert die gespeicherte Pose ein. Texturen, Transparenz (Wimpern, Haarkarten) und Normalmaps werden übernommen; das Skelett kommt als Knochen in den Rig-Modus (nicht an die Meshes gebunden und nur dort sichtbar). Mimik (Morph-Targets), Spring-Bones und MToon-Schatten werden nicht übernommen.
+- Mit echten Dateien geprüft: zwei VRM-1.0-Avatare (118.000 und 78.000 Dreiecke, mit Texturen) und ein FBX. Foto-Scanner sowie Splat- und LAS-Import nur mit selbst erzeugten Testdateien.
 
 ## Ehrlich zum Foto-Scanner
 
@@ -84,7 +85,7 @@ node build.js        # schreibt dist/formwerk3d{,.min,.artifact,.artifact.min,.o
 
 Der Quelltext liegt in `src/` als nummerierte Module (`00-core.js` … `99-boot.js`), `build.js` fügt sie zu einer Datei zusammen. three.js (r147) wird zur Laufzeit per CDN nachgeladen (cdnjs, jsDelivr, unpkg).
 
-Tests (`test/`) laufen mit Playwright/Chromium (`pw_*.js`), jsdom (`t1`–`t4`) oder reinem Node (`t5`, `t6`).
+Tests (`test/`) laufen mit Playwright/Chromium (`pw_*.js`), jsdom (`t1`–`t4`) oder reinem Node (`t5`, `t6`). `node test/pw_vrm_import.js datei.vrm` prüft den VRM-Import mit einer eigenen Datei (ohne Argument wird übersprungen).
 
 ## Lizenz
 

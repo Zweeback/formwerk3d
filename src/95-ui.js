@@ -82,7 +82,7 @@ UI.setMode = function (m, quiet) {
   UI.afterMode();
 };
 UI.afterMode = function () {
-  document.body.dataset.mode = S.mode; $$('.mode').forEach(b => b.setAttribute('aria-selected', String(b.dataset.m === S.mode)));
+  RG_.syncVis(); document.body.dataset.mode = S.mode; $$('.mode').forEach(b => b.setAttribute('aria-selected', String(b.dataset.m === S.mode)));
   UI.refreshToolbar(); UI.drawPanel(true); UI.drawInspector(); V.refreshAll();
 };
 UI.closeSketch = function () { if (P2.editor) P2.use(null); UI.drawPanel(true); };
