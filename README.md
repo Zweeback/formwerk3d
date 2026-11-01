@@ -3,8 +3,8 @@
 3D-Viewer und Editor in **einer einzigen HTML-Datei** – gemacht zum Einfügen in KI-Chats, läuft aber genauso lokal im Browser (kein Server, keine Anmeldung, alle Daten bleiben auf dem Gerät).
 
 **Dateien:**
-- `dist/formwerk3d.min.html` (≈ 333 KB): zum Öffnen im Browser, lädt three.js aus dem Netz.
-- `dist/formwerk3d.offline.html` (≈ 1,5 MB): komplett offline, three.js und Zusatzmodule sind eingebettet, keine Netzanfragen.
+- `dist/formwerk3d.min.html` (≈ 1480 KB): zum Öffnen im Browser, lädt three.js aus dem Netz.
+- `dist/formwerk3d.offline.html` (≈ 2.6 MB, mit Manifold-WASM): komplett offline, three.js und Zusatzmodule sind eingebettet, keine Netzanfragen.
 - `dist/formwerk3d.artifact.min.html`: für Artefakt-Fenster in KI-Chats (ohne Doctype/head/body).
 
 ## Was drin ist
