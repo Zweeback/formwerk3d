@@ -217,7 +217,7 @@ UI.panels.cad = function (box) {
   } else if (o) box.append(sec('Parameter', hint('„' + o.name + '“ ist kein parametrisches Grundkörper-Objekt (z. B. Ergebnis einer Booleschen Operation) – Form per Skalieren oder mit den Werkzeugen unten ändern.')));
   box.append(
     sec('Boolesche Operationen',
-      hint('<b>A</b> = zuerst gewählt, <b>B</b> = danach (Shift+Klick). Differenz bohrt B aus A.' + (S.sel.length >= 2 ? ' Aktuell: <b>' + S.sel[0].name + '</b> / <b>' + S.sel[1].name + '</b>' : '')),
+      hint('<b>A</b> = zuerst gewählt, <b>B</b> = danach (Shift+Klick). Differenz bohrt B aus A. ' + (F.manifold && F.manifold.lib ? 'Engine: <b>Manifold</b> – robust auch bei 100.000+ Dreiecken (Netze müssen wasserdicht sein).' : 'Engine: einfach (bis 14.000 Dreiecke); Manifold lädt …') + (S.sel.length >= 2 ? ' Aktuell: <b>' + S.sel[0].name + '</b> / <b>' + S.sel[1].name + '</b>' : '')),
       row(btn('A ∪ B', () => UI.boolean('union'), { cls: 'sm', title: 'Vereinigung' }), btn('A − B', () => UI.boolean('subtract'), { cls: 'sm pri', title: 'Differenz' }), btn('A ∩ B', () => UI.boolean('intersect'), { cls: 'sm', title: 'Schnitt' })),
       chk('Originale behalten (ausblenden)', cadKeep, v => cadKeep = v)),
     sec('Skizze → Körper',

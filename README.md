@@ -11,7 +11,7 @@
 
 | Bereich | Inhalt |
 |---|---|
-| **CAD** | Parametrische Körper, Boolesche Operationen (Vereinigen/Abziehen/Schneiden), Skizze → Extrusion / Drehkörper, Messen, Spiegeln, Array, Shell |
+| **CAD** | Parametrische Körper, Boolesche Operationen mit der Manifold-Engine (Vereinigen/Abziehen/Schneiden, robust auch bei 100.000+ Dreiecken, Farben und Texturen bleiben erhalten), Skizze → Extrusion / Drehkörper, Messen, Spiegeln, Array, Shell |
 | **Mesh** | Punkte auswählen (Rahmen, alle/keine/umkehren/erweitern), verschieben/drehen/skalieren mit weichem Abfall, Auswahl glätten. Flächen: **Extrudieren, Einsetzen, Fase, Löschen, Abtrennen, Kopieren, Verschmelzen, Kantenschleife**. Unterteilen (Loop/flach), UV-Projektion (Box, Planar, Kugel, Zylinder), Vereinfachen |
 | **Sculpt** | Pinsel Aufbauen, Aufblasen, Glätten, Kneifen, Planieren, Greifen; Radius, Stärke, Abfall, Symmetrie |
 | **Textur-Studio** | Ebenen, Pinsel, Filter, Generatoren, direktes Malen auf dem 3D-Modell |
@@ -28,7 +28,7 @@ Einheiten: 1 Einheit = 1 Meter, Y oben, rechtshändig.
 
 - **Mesh-Modus** arbeitet auf Dreiecken ohne Quad-Topologie. Kantenschleifen sind Ebenenschnitte (achsparallel), Fase gilt für den Rand einer gewählten Fläche, nicht für einzelne Kanten. Kein freies Messer, keine Brücke, kein Kantenfluss-Werkzeug.
 - **Negatives Extrudieren** direkt am Außenrand erzeugt überlappende Flächen (wie in Blender). Für Taschen erst „Einsetzen“, dann negativ extrudieren.
-- **Booleans** rechnen auf Dreiecksnetzen (BSP). Keine exakte B-Rep-Geometrie, kein STEP/DXF, keine Skizzen-Constraints, keine Verlaufsliste.
+- **Booleans** rechnen auf Dreiecksnetzen mit [Manifold](https://github.com/elalish/manifold) (WASM, eingebettet, Apache-2.0). Die Netze müssen wasserdicht sein (z. B. die Reifen des Referenz-Rettungswagens sind es nicht). Wird WebAssembly blockiert (manche Chat-Fenster), springt die einfache BSP-Engine ein, die nur bis 14.000 Dreiecke pro Objekt reicht. Keine exakte B-Rep-Geometrie, kein STEP/DXF, keine Skizzen-Constraints, keine Verlaufsliste.
 - **Sculpt** ohne Dynamic Topology und ohne Maskierung; per Befehl gibt es fünf Pinsel (kein Greifen).
 - Die Fassungen außer `formwerk3d.offline.html` laden three.js und Schriften aus dem Netz (CDN).
 - **glTF/VRM-Import** friert die gespeicherte Pose ein. Texturen, Transparenz (Wimpern, Haarkarten) und Normalmaps werden übernommen; das Skelett kommt als Knochen in den Rig-Modus (nicht an die Meshes gebunden und nur dort sichtbar). Mimik (Morph-Targets), Spring-Bones und MToon-Schatten werden nicht übernommen.
@@ -37,6 +37,10 @@ Einheiten: 1 Einheit = 1 Meter, Y oben, rechtshändig.
 ## Ehrlich zum Foto-Scanner
 
 Der Scanner baut aus den Silhouetten eine **äußere Hülle** (Visual Hull) und legt die Fotos als Textur darüber. Das ist kein Ersatz für echte Photogrammetrie oder Gaussian-Splat-Training: Mulden, Hohlräume, dünne Antennen, Glas und Spiegelungen erfasst er nicht. Die geschätzte Kamerahöhe kann um ca. 10° danebenliegen, Texturen sind an verdeckten Stellen fleckig. Beste Ergebnisse: einfarbiger Untergrund, gleichmäßiges Licht, Objekt füllt das Bild, Fotos der Reihe nach rund um das Objekt.
+
+## Meshroom, COLMAP und andere Photogrammetrie
+
+Meshroom (AliceVision) ist native C++/CUDA-Software und lässt sich nicht in eine HTML-Datei einbauen. Der Weg ist: Meshroom (oder COLMAP, RealityCapture, Polycam, Luma …) rechnet, Formwerk 3D übernimmt das Ergebnis. Den Ausgabeordner (`texturedMesh.obj`, `.mtl`, Textur) als ZIP oder einzeln hineinziehen; Punktwolken (PLY/XYZ/LAS) und Gaussian Splats lassen sich über „In Netz wandeln“ in Dreiecke verwandeln. Danach stehen Vereinfachen, Booleans, Sculpt, Textur, Rig und Export zur Verfügung. Geprüft mit einem nachgebauten Meshroom-Ausgabeordner (490.000 Dreiecke, 1024²-Textur): Import 5 s, Vereinfachen auf 10 % unter 1 s (`test/pw_meshroom.js`). Mit echten Meshroom-Daten noch nicht getestet.
 
 ## Mit einer KI benutzen
 

@@ -17,7 +17,7 @@ F.boolean = function (op, A, B, keep, name) {
   let geo; try { geo = F.csg.run(op, A, B); } catch (e) { throw new Error(e instanceof RangeError || /Dreieck/.test(e.message) ? e.message : 'Boolesche Operation fehlgeschlagen: ' + e.message); }
   if (!geo.attributes.position.count) throw new Error('Ergebnis ist leer – überlappen sich die Objekte?');
   const sym = { union: ' + ', subtract: ' − ', intersect: ' ∩ ' }[op], res = V.addMesh(geo, { name: name || (A.name + sym + B.name), kind: 'csg', dropToGrid: false, position: [0, 0, 0], silent: true, material: A.material.clone() });
-  res.material.userData = Object.assign({}, A.material.userData); const vis = [A.visible, B.visible];
+  res.material.userData = Object.assign({}, A.material.userData); if (geo.attributes.color && !res.material.vertexColors) { res.material.vertexColors = true; res.material.needsUpdate = true; } const vis = [A.visible, B.visible];
   const hide = () => { if (keep) { A.visible = false; B.visible = false; } else { V._detach(A); V._detach(B); } };
   hide(); V.select(res);
   H2.push('Boolesch: ' + op, () => { V._detach(res); if (keep) { A.visible = vis[0]; B.visible = vis[1]; } else { V._attach(A); V._attach(B); } }, () => { hide(); V._attach(res); });
@@ -244,7 +244,7 @@ F.llmPrompt = function () {
 F.manual = function () {
   return F.llmPrompt() + '\n\n' +
     '=== Formwerk 3D · Gesamtanleitung für KI-Assistenten ===\n' +
-    'Was das ist: ein 3D-Editor in einer einzigen HTML-Seite (läuft im Browser, im Chat-Fenster, ohne Server). Er kann CAD (Boolesche Operationen, Skizze → Extrusion/Drehung), Mesh-Bearbeitung, Sculpting, Textur-Studio, Rigging, Karten → 3D, Fotoscanner, Import und Export.\n' +
+    'Was das ist: ein 3D-Editor in einer einzigen HTML-Seite (läuft im Browser, im Chat-Fenster, ohne Server). Er kann CAD (Boolesche Operationen mit der Manifold-Engine – robust auch bei 100.000+ Dreiecken, Farben/Texturen bleiben erhalten, Netze müssen wasserdicht sein; Skizze → Extrusion/Drehung), Mesh-Bearbeitung, Sculpting, Textur-Studio, Rigging, Karten → 3D, Fotoscanner, Import und Export.\n' +
     'So steuerst du ihn:\n' +
     '1. Der Nutzer fügt deine JSON-Befehle (siehe oben) im Modus „Export“ unter „Skript & Befehle“ ein und drückt „Ausführen“. Das geht auch ohne Skripte, wenn das Chat-Fenster Skripte sperrt.\n' +
     '2. Hast du Zugriff auf die Seite (Browser-Werkzeug), rufst du direkt auf: Formwerk3D.run(\'[{"add":"box","w":2,"h":1,"d":1}]\') oder Formwerk3D.cmd([...]) oder die API Formwerk3D.api.box({...}), .subtract(a,b), .mirror(o,"x"), .array(o,5,[1,0,0]), .decimate(o,0.3), .scene("rtw"), .screenshot().\n' +
