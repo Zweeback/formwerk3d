@@ -1046,6 +1046,10 @@ V.init = function (host) {
 V.requestRender = () => { V.dirty = true; };
 V.render = function () {
   V.lights.position.copy(V.cam.position); V.lights.quaternion.copy(V.cam.quaternion);
+  if (V.cam === V.persp) {   // Kartengroße Szenen (mehrere km): Sichtweite und Nahebene mit dem Abstand mitführen
+    const dist = V.cam.position.distanceTo(V.controls.target), far = Math.max(4000, dist * 4), near = Math.max(0.01, Math.min(dist * 0.001, 5));
+    if (V.persp.far !== far || V.persp.near !== near) { V.persp.far = far; V.persp.near = near; V.persp.updateProjectionMatrix(); }
+  }
   if (V.selBox.visible) V.selBox.update();
   V.updateLabels && V.updateLabels();
   V.renderer.render(V.scene, V.cam);

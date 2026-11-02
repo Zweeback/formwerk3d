@@ -94,3 +94,6 @@ Tests (`test/`) laufen mit Playwright/Chromium (`pw_*.js`), jsdom (`t1`–`t4`) 
 ## Lizenz
 
 Noch keine festgelegt – bitte vor dem Veröffentlichen eine Lizenz hinzufügen.
+
+## Dortmund-Kacheln (Vorläufig)
+`docs/dortmund/` enthält einen Kachel-Viewer mit vier Detailstufen und rollendem Ladefenster (Beschreibung in `docs/dortmund/README.md`), `tools/dortmund/` die Skripte, mit denen aus den 48 Zellen bereinigt und die Kacheln erzeugt wurden. Formwerk selbst führt Sichtweite und Nahebene jetzt mit dem Kameraabstand mit, damit kartengroße Importe (mehrere Kilometer) sichtbar bleiben.
