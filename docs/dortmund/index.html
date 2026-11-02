@@ -27,6 +27,25 @@ canvas{display:block;width:100%;height:100%}
   const cam = new THREE.PerspectiveCamera(60, 1, 1, 9000);
   const hemi = new THREE.HemisphereLight(0xdfeaf5, 0x6b6a5e, 0.55); scene.add(hemi);
   const sun = new THREE.DirectionalLight(0xfff1d8, 0.95); sun.position.set(-0.5, 0.85, 0.45); scene.add(sun);
+  /* Wahrzeichen und Ortsmarken (aus tiles/mission.json "orte"): die Schlanke Mathilde (Uhrenkandelaber, 13,3 m, Stahl, 1908) steht nicht in LoD2, deshalb hier als einfaches Modell */
+  fetch(BASE + 'mission.json').then(r => r.json()).then(mj => {
+    const O = mj.orte || {}, add = (o, m) => { m.position.set(o.x, o.y, o.z); scene.add(m); };
+    const label = (txt, o, h) => { const c = document.createElement('canvas'); c.width = 512; c.height = 96; const g = c.getContext('2d'); g.fillStyle = 'rgba(20,28,34,.78)'; g.fillRect(0, 0, 512, 96); g.fillStyle = '#fff'; g.font = '600 38px sans-serif'; g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText(txt, 256, 50);
+      const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(c), depthWrite: false, fog: false, sizeAttenuation: false })); sp.scale.set(0.2, 0.0375, 1); sp.position.set(o.x, o.y + h, o.z); scene.add(sp); };
+    for (const k in O) {
+      const o = O[k];
+      if (/Mathilde/.test(k)) {
+        const g = new THREE.Group(), steel = new THREE.MeshStandardMaterial({ color: 0x25302a, roughness: .5, metalness: .6 }), gold = new THREE.MeshStandardMaterial({ color: 0xc9a24a, roughness: .4, metalness: .7 }), face = new THREE.MeshBasicMaterial({ color: 0xf4efe0 }), ring = new THREE.MeshBasicMaterial({ color: 0x1a1a1a });
+        const cyl = (r0, r1, h, y, m) => { const q = new THREE.Mesh(new THREE.CylinderGeometry(r0, r1, h, 14), m); q.position.y = y; g.add(q); return q; };
+        cyl(0.55, 0.65, 1.0, 0.5, steel); cyl(0.2, 0.3, 9.8, 5.9, steel); cyl(0.38, 0.38, 0.25, 4.0, gold); cyl(0.3, 0.3, 0.2, 10.9, gold);
+        const box = new THREE.Mesh(new THREE.BoxGeometry(1.8, 1.8, 0.55), steel); box.position.y = 11.8; g.add(box);
+        for (const sgn of [1, -1]) { const f = new THREE.Mesh(new THREE.CircleGeometry(0.72, 24), face); f.position.set(0, 11.8, sgn * 0.285); if (sgn < 0) f.rotation.y = Math.PI; g.add(f);
+          const rg = new THREE.Mesh(new THREE.RingGeometry(0.68, 0.76, 24), ring); rg.position.copy(f.position); rg.position.z += sgn * 0.002; if (sgn < 0) rg.rotation.y = Math.PI; g.add(rg); }
+        const roof = new THREE.Mesh(new THREE.ConeGeometry(1.1, 1.1, 4), gold); roof.position.y = 13.25; roof.rotation.y = Math.PI / 4; g.add(roof);
+        add(o, g); label('Schlanke Mathilde', o, 24);
+      } else label(k.replace(/ \(.*\)/, ''), o, 20);
+    }
+  }).catch(() => { });
   const matCache = {};
   const matT = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 1, metalness: 0 });
   const matC = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 1, metalness: 0, flatShading: true });
@@ -44,14 +63,14 @@ canvas{display:block;width:100%;height:100%}
     const r = await fetch(BASE + name); if (!r.ok) throw new Error(name + ' ' + r.status);
     const b = await r.arrayBuffer(); S.bytes += b.byteLength; S.fetches++; return b;
   }
-  function heightMesh(L, cx, cz, buf) {
+  function heightMesh(L, cx, cz, buf, tex) {
     const info = M.levels[L], n = info.n, res = info.res, city = info.kind === 'city';
     const hq = new Uint16Array(buf, 0, n * n), fl = city ? new Uint8Array(buf, n * n * 2, n * n) : null;
-    const nv = n * n, ns = 4 * n, pos = new Float32Array((nv + ns) * 3), col = new Float32Array((nv + ns) * 3), nor = new Float32Array((nv + ns) * 3);
+    const nv = n * n, ns = 4 * n, pos = new Float32Array((nv + ns) * 3), col = new Float32Array((nv + ns) * 3), nor = new Float32Array((nv + ns) * 3), uv = new Float32Array((nv + ns) * 2);
     const H = (i, j) => HMIN + hq[Math.min(n - 1, Math.max(0, i)) * n + Math.min(n - 1, Math.max(0, j))] / HSC;
     const x0 = cx * CS, z0 = -cz * CS;
     for (let i = 0; i < n; i++) for (let j = 0; j < n; j++) {
-      const v = i * n + j, y = H(i, j); pos[v * 3] = x0 + j * res; pos[v * 3 + 1] = y; pos[v * 3 + 2] = z0 - i * res;
+      const v = i * n + j, y = H(i, j); pos[v * 3] = x0 + j * res; pos[v * 3 + 1] = y; pos[v * 3 + 2] = z0 - i * res; uv[v * 2] = j / (n - 1); uv[v * 2 + 1] = i / (n - 1);
       if (fl && fl[v]) { for (let k = 0; k < 3; k++) col[v * 3 + k] = [0.66, 0.62, 0.58][k] * (DEBUG ? TINT[L][k] : 1); }
       else ramp(y, col, v * 3, L);
       let nx = -(H(i, j + 1) - H(i, j - 1)) / (2 * res), nz = (H(i + 1, j) - H(i - 1, j)) / (2 * res), nl = Math.hypot(nx, 1, nz);
@@ -70,7 +89,7 @@ canvas{display:block;width:100%;height:100%}
       for (let k = 0; k < n; k++) {
         const i = i0 + di * k, j = j0 + dj * k, v = i * n + j;
         pos[s * 3] = pos[v * 3]; pos[s * 3 + 1] = pos[v * 3 + 1] - depth; pos[s * 3 + 2] = pos[v * 3 + 2];
-        col[s * 3] = col[v * 3]; col[s * 3 + 1] = col[v * 3 + 1]; col[s * 3 + 2] = col[v * 3 + 2]; nor[s * 3 + 1] = 1; s++;
+        col[s * 3] = col[v * 3]; col[s * 3 + 1] = col[v * 3 + 1]; col[s * 3 + 2] = col[v * 3 + 2]; nor[s * 3 + 1] = 1; uv[s * 2] = uv[v * 2]; uv[s * 2 + 1] = uv[v * 2 + 1]; s++;
       }
       for (let k = 0; k < n - 1; k++) {
         const v1 = (i0 + di * k) * n + j0 + dj * k, v2 = (i0 + di * (k + 1)) * n + j0 + dj * (k + 1), s1 = first + k, s2 = first + k + 1;
@@ -78,31 +97,67 @@ canvas{display:block;width:100%;height:100%}
         ind[p++] = v1; ind[p++] = v2; ind[p++] = s1; ind[p++] = v2; ind[p++] = s2; ind[p++] = s1;   // beidseitig sichtbar
       }
     }
-    const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.BufferAttribute(pos, 3)); g.setAttribute('color', new THREE.BufferAttribute(col, 3)); g.setAttribute('normal', new THREE.BufferAttribute(nor, 3));
+    const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.BufferAttribute(pos, 3)); g.setAttribute('color', new THREE.BufferAttribute(col, 3)); g.setAttribute('normal', new THREE.BufferAttribute(nor, 3)); g.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
     g.setIndex(new THREE.BufferAttribute(ind.subarray(0, p), 1));
-    const m = new THREE.Mesh(g, city ? matC : matT); m.frustumCulled = true; g.computeBoundingSphere();
+    let mat = city ? matC : matT;
+    if (tex) { mat = new THREE.MeshStandardMaterial({ map: tex, color: new THREE.Color(TEXGAIN, TEXGAIN, TEXGAIN), roughness: 1, metalness: 0, flatShading: city }); mat.userData.own = true; }
+    const m = new THREE.Mesh(g, mat); m.frustumCulled = true; g.computeBoundingSphere();
     return { mesh: m, tris: p / 3 };
   }
-  function buildingMesh(L, buf) {
+  const WHITE = new THREE.DataTexture(new Uint8Array([255, 255, 255, 255]), 1, 1); WHITE.needsUpdate = true;
+  function buildingMat(tex, cx, cz) {
+    const m = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.92, metalness: 0, flatShading: true, side: THREE.DoubleSide }); m.userData.own = true; m.userData.shared = true;
+    m.onBeforeCompile = sh => {
+      sh.uniforms.uTex = { value: tex || WHITE }; sh.uniforms.uO = { value: new THREE.Vector2(cx * CS, cz * CS) }; sh.uniforms.uHas = { value: tex ? 1 : 0 }; sh.uniforms.uWin = { value: WINDOWS ? 1 : 0 };
+      sh.vertexShader = sh.vertexShader.replace('#include <common>', '#include <common>\nvarying vec3 vWP;').replace('#include <begin_vertex>', '#include <begin_vertex>\nvWP = position;');
+      sh.fragmentShader = sh.fragmentShader.replace('#include <common>', '#include <common>\nvarying vec3 vWP; uniform sampler2D uTex; uniform vec2 uO; uniform float uHas; uniform float uWin;')
+        .replace('#include <normal_fragment_maps>', `#include <normal_fragment_maps>
+        vec3 wn = inverseTransformDirection(normal, viewMatrix);
+        float roofK = smoothstep(0.35, 0.65, abs(wn.y));
+        vec2 puv = vec2((vWP.x - uO.x) / 512.0, (-vWP.z - uO.y) / 512.0);
+        vec3 photo = texture2D(uTex, clamp(puv, 0.002, 0.998)).rgb;
+        vec3 roofC = mix(vec3(0.46, 0.40, 0.37), photo * 0.92, uHas);
+        vec3 wallC = vec3(0.80, 0.76, 0.69);
+        vec2 tg = normalize(vec2(-wn.z, wn.x) + vec2(1e-4));
+        vec2 cc = vec2(dot(vWP.xz - uO, tg) / 3.2, vWP.y / 3.0); vec2 f = fract(cc); vec2 fw = clamp(fwidth(cc), 0.0005, 0.25);
+        float win = smoothstep(0.22, 0.22 + fw.x, f.x) * (1.0 - smoothstep(0.78 - fw.x, 0.78, f.x)) * smoothstep(0.30, 0.30 + fw.y, f.y) * (1.0 - smoothstep(0.80 - fw.y, 0.80, f.y));
+        float fade = (1.0 - smoothstep(70.0, 260.0, length(vWP - cameraPosition))) * uWin;
+        vec3 glass = vec3(0.07, 0.10, 0.14) + vec3(0.10, 0.13, 0.17) * smoothstep(0.3, 0.8, f.y);
+        wallC = mix(wallC, glass, win * fade * 0.92);
+        diffuseColor.rgb = mix(wallC, roofC, roofK);`);
+    };
+    return m;
+  }
+  function buildingMesh(L, buf, tex, cx, cz) {
     const hd = new Uint32Array(buf, 0, 4), nv = hd[0], nt = hd[1], i16 = hd[2], bb = new Float32Array(buf, 16, 6);
     const qp = new Uint16Array(buf, 40, nv * 3), pos = new Float32Array(nv * 3);
     const sx = (bb[3] - bb[0]) / 65535, sy = (bb[4] - bb[1]) / 65535, sz = (bb[5] - bb[2]) / 65535;
     for (let v = 0; v < nv; v++) { pos[v * 3] = bb[0] + qp[v * 3] * sx; pos[v * 3 + 1] = bb[1] + qp[v * 3 + 1] * sy; pos[v * 3 + 2] = bb[2] + qp[v * 3 + 2] * sz; }
     const off = 40 + nv * 6 + ((4 - (nv * 6) % 4) % 4), idx = i16 ? new Uint16Array(buf, off, nt * 3) : new Uint32Array(buf, off, nt * 3);
     const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.BufferAttribute(pos, 3)); g.setIndex(new THREE.BufferAttribute(idx, 1)); g.computeBoundingSphere();
-    let mat = matB; if (DEBUG) { mat = matCache['b' + L] = matCache['b' + L] || new THREE.MeshStandardMaterial({ color: new THREE.Color(0.68 * TINT[L][0], 0.66 * TINT[L][1], 0.62 * TINT[L][2]), roughness: .92, flatShading: true, side: THREE.DoubleSide }); }
+    let mat = buildingMat(tex, cx, cz); if (DEBUG) { mat = matCache['b' + L] = matCache['b' + L] || new THREE.MeshStandardMaterial({ color: new THREE.Color(0.68 * TINT[L][0], 0.66 * TINT[L][1], 0.62 * TINT[L][2]), roughness: .92, flatShading: true, side: THREE.DoubleSide }); }
     return { mesh: new THREE.Mesh(g, mat), tris: nt };
+  }
+  const TEXGAIN = +(q.get('gain') || 1.0), USETEX = q.get('tex') !== '0', WINDOWS = q.get('win') !== '0', maxAniso = Math.min(8, renderer.capabilities.getMaxAnisotropy());
+  async function getTex(L, cx, cz) {
+    if (!USETEX) return null;
+    try {
+      const r = await fetch(BASE + 't' + (L <= 1 ? 0 : L - 1) + '_' + cx + '_' + cz + '.jpg'); if (!r.ok) return null;
+      const b = await r.blob(); S.bytes += b.size; S.fetches++; const url = URL.createObjectURL(b);
+      const img = await new Promise((res, rej) => { const i = new Image(); i.onload = () => res(i); i.onerror = rej; i.src = url; }); URL.revokeObjectURL(url);
+      const t = new THREE.Texture(img); t.anisotropy = maxAniso; t.generateMipmaps = true; t.minFilter = THREE.LinearMipmapLinearFilter; t.magFilter = THREE.LinearFilter; t.needsUpdate = true; return t;
+    } catch (e) { return null; }
   }
   async function loadLevel(cx, cz, L) {
     const grp = new THREE.Group(); let tris = 0, ent = M.tiles[key(cx, cz)] || {};
-    const jobs = [get('h' + L + '_' + cx + '_' + cz + '.bin')];
+    const jobs = [get('h' + L + '_' + cx + '_' + cz + '.bin'), getTex(L, cx, cz)];
     const hasB = L <= 1 && ent['b' + L]; if (hasB) jobs.push(get('b' + L + '_' + cx + '_' + cz + '.bin'));
-    const [hb, bb] = await Promise.all(jobs);
-    const h = heightMesh(L, cx, cz, hb); grp.add(h.mesh); tris += h.tris;
-    if (bb) { const b = buildingMesh(L, bb); grp.add(b.mesh); tris += b.tris; }
+    const [hb, tex, bb] = await Promise.all(jobs);
+    const h = heightMesh(L, cx, cz, hb, tex); grp.add(h.mesh); tris += h.tris;
+    if (bb) { const b = buildingMesh(L, bb, tex, cx, cz); grp.add(b.mesh); tris += b.tris; }
     return { grp, tris };
   }
-  function dispose(grp) { grp.traverse(o => { if (o.geometry) o.geometry.dispose(); }); scene.remove(grp); }
+  function dispose(grp) { grp.traverse(o => { if (o.geometry) o.geometry.dispose(); if (o.material && o.material.userData && o.material.userData.own) { if (o.material.map) o.material.map.dispose(); o.material.dispose(); } }); scene.remove(grp); }
   function pump() {
     while (S.inflight < CONC && queue.length) {
       const j = queue.shift(), t = tiles.get(j.key);

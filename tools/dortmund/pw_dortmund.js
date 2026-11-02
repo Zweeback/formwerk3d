@@ -1,6 +1,6 @@
 require('fs').mkdirSync(__dirname + '/shots', { recursive: true });
 const { chromium } = require('playwright'); const fs = require('fs');
-const URL = 'http://localhost:8099/index.html', SH = __dirname + '/shots/';
+const URL = 'http://localhost:' + (process.env.PORT || 8099) + '/index.html', SH = __dirname + '/shots/';
 const W = 1280, Hh = 720;
 (async () => {
   const br = await chromium.launch({ args: ['--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist', '--enable-webgl'] });

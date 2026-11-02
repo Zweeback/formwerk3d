@@ -1,11 +1,12 @@
-# Bereinigt die 48 Zellen und erzeugt die Kachel-Pyramide. Aufruf: python3 -I build_tiles.py out_dir
+# Bereinigt die Zellen und erzeugt die Kachel-Pyramide. Aufruf: python3 -I build_tiles.py out_dir [Spalten=6] [npz=out/merged.npz]
+# (Spalten=10 und out/merged_ext.npz: Gebiet mit der Erweiterung nach Osten, siehe build_east.py)
 import sys, os, json, time, numpy as np
 import fast_simplification as fs
 OUT = sys.argv[1]; os.makedirs(OUT, exist_ok=True)
 t0 = time.time()
 def lap(s): print('[%5.1fs] %s' % (time.time() - t0, s), flush=True)
-d = np.load('out/merged.npz'); tp, tt, bp, bt = d['tp'], d['tt'], d['bp'], d['bt']
-NX, NZ, CS = 6, 8, 512.0
+d = np.load(sys.argv[3] if len(sys.argv) > 3 else 'out/merged.npz'); tp, tt, bp, bt = d['tp'], d['tt'], d['bp'], d['bt']
+NX, NZ, CS = (int(sys.argv[2]) if len(sys.argv) > 2 else 6), 8, 512.0
 GW, GH = NX * 128 + 1, NZ * 128 + 1           # 769 x 1025 Knoten im 4-m-Raster
 # ---- 1) Gelände: Knoten mitteln -> Nähte geschlossen
 j = np.rint(tp[:, 0] / 4).astype(int); i = np.rint(-tp[:, 2] / 4).astype(int)

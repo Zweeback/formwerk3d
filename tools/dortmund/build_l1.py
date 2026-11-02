@@ -33,7 +33,7 @@ def runs(vals):                       # vals: Liste von Schlüsseln (None = leer
     return out
 manifest = json.load(open(D + '/manifest.json')); allP = []; allT = []; base = 0; tot = [0, 0]
 for cz in range(8):
-    for cx in range(6):
+    for cx in range(manifest["grid"][0]):
         I0, J0 = cz * 128, cx * 128; quads = []         # (x0,x1,y0,y1,z0,z1 als Ecken) wir sammeln Vierecke als 4 Punkte
         def Q(a, b, c, d): quads.append((a, b, c, d))
         # Dächer: verschmolzene Rechtecke gleicher Höhe

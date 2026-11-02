@@ -1,6 +1,6 @@
 require('fs').mkdirSync(__dirname + '/shots', { recursive: true });
 const { chromium } = require('playwright'); const fs = require('fs');
-const URL = 'http://localhost:8099/index.html', SH = __dirname + '/shots/';
+const URL = 'http://localhost:' + (process.env.PORT || 8099) + '/index.html', SH = __dirname + '/shots/';
 (async () => {
   const br = await chromium.launch({ args: ['--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist', '--enable-webgl'] });
   const pg = await (await br.newContext({ viewport: { width: 1280, height: 720 }, deviceScaleFactor: 1 })).newPage(); const errs = []; pg.on('pageerror', e => errs.push('PAGEERR ' + e.message)); pg.on('console', m => { if (m.type() === 'error') errs.push(m.text().slice(0, 200)); });

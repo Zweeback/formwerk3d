@@ -16,7 +16,7 @@
     const [gb, cb, mb, mj] = await Promise.all([buf(BASE + 'ground.bin'), buf(BASE + 'col.bin'), buf(BASE + 'main.bin'), fetch(BASE + 'mission.json').then(r => r.json())]);
     const gltf = await new Promise((res, rej) => new T.GLTFLoader().load('rtw.glb', res, undefined, rej));
     const ground = new Uint16Array(gb), col = new Uint8Array(cb), main = new Uint8Array(mb);
-    const GW = 769, GH = 1025, HMIN = -40, HSC = 1000, CW = mj.w, CH = mj.h, ROWB = mj.row_bytes;
+    const GW = mj.gw || 769, GH = mj.gh || 1025, HMIN = -40, HSC = 1000, CW = mj.w, CH = mj.h, ROWB = mj.row_bytes;
     const gh = (x, z) => { let fx = Math.min(GW - 1.001, Math.max(0, x / 4)), fz = Math.min(GH - 1.001, Math.max(0, -z / 4)); const j = fx | 0, i = fz | 0, u = fx - j, v = fz - i;
       return HMIN + (ground[i * GW + j] * (1 - u) * (1 - v) + ground[i * GW + j + 1] * u * (1 - v) + ground[(i + 1) * GW + j] * (1 - u) * v + ground[(i + 1) * GW + j + 1] * u * v) / HSC; };
     const bit = (a, i, j, out) => (i < 0 || j < 0 || i >= CH || j >= CW) ? out : (a[i * ROWB + (j >> 3)] >> (j & 7)) & 1;
