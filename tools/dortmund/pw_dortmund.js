@@ -5,7 +5,7 @@ const W = 1280, Hh = 720;
 (async () => {
   const br = await chromium.launch({ args: ['--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist', '--enable-webgl'] });
   const ctx = await br.newContext({ viewport: { width: W, height: Hh }, deviceScaleFactor: 1 });
-  const pg = await ctx.newPage(); const errs = []; pg.on('pageerror', e => errs.push(e.message)); pg.on('console', m => { if (m.type() === 'error') errs.push(m.text().slice(0, 200)); });
+  const pg = await ctx.newPage(); pg.setDefaultTimeout(300000); const errs = []; pg.on('pageerror', e => errs.push(e.message)); pg.on('console', m => { if (m.type() === 'error') errs.push(m.text().slice(0, 200)); });
   const settle = async (to) => { const t = Date.now(); await pg.waitForFunction(() => window.__v && window.__v.settled(), null, { timeout: to || 90000, polling: 50 }); return Date.now() - t; };
   const frameMs = async () => pg.evaluate(() => new Promise(r => { let n = 0, t0 = performance.now(); const f = () => { if (++n >= 4) r((performance.now() - t0) / 4); else requestAnimationFrame(f); }; requestAnimationFrame(f); }));
   const out = {};
