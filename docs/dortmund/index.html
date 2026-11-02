@@ -9,8 +9,9 @@ canvas{display:block;width:100%;height:100%}
 #help button{font:inherit;margin-left:6px;cursor:pointer}
 </style></head><body>
 <canvas id="c"></canvas><div id="hud">lade …</div>
-<div id="help">Ziehen = umsehen · W A S D = fliegen · Q/E = hoch/runter · Umschalt = schnell · Mausrad = Tempo <button id="tour">Rundflug</button><br>Daten: LoD2 + DGM1 NRW, Datenlizenz Deutschland – Zero – Version 2.0 (laut Datensatz)</div>
+<div id="help">Ziehen = umsehen · W A S D = fliegen · Q/E = hoch/runter · Umschalt = schnell · Mausrad = Tempo <button id="tour">Rundflug</button><button id="gobtn">Fahren (Rettungswagen)</button><br>Daten: LoD2 + DGM1 NRW, Datenlizenz Deutschland – Zero – Version 2.0 (laut Datensatz)</div>
 <script src="three.min.js"></script>
+<script src="GLTFLoader.js"></script>
 <script>
 (async function () {
   const q = new URLSearchParams(location.search), DEBUG = q.has('debug'), BASE = q.get('base') || 'tiles/';
@@ -24,7 +25,7 @@ canvas{display:block;width:100%;height:100%}
   renderer.setPixelRatio(Math.min(devicePixelRatio || 1, 2));
   const scene = new THREE.Scene(); scene.background = new THREE.Color(0xaec3d4); scene.fog = new THREE.Fog(0xaec3d4, TH[3] * 0.62, TH[3] * 1.02);
   const cam = new THREE.PerspectiveCamera(60, 1, 1, 9000);
-  scene.add(new THREE.HemisphereLight(0xdfeaf5, 0x6b6a5e, 0.55));
+  const hemi = new THREE.HemisphereLight(0xdfeaf5, 0x6b6a5e, 0.55); scene.add(hemi);
   const sun = new THREE.DirectionalLight(0xfff1d8, 0.95); sun.position.set(-0.5, 0.85, 0.45); scene.add(sun);
   const matCache = {};
   const matT = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 1, metalness: 0 });
@@ -144,7 +145,7 @@ canvas{display:block;width:100%;height:100%}
   canvas.addEventListener('pointerup', () => drag = false);
   canvas.addEventListener('pointermove', e => { if (drag) { yaw -= e.movementX * 0.004; pitch = Math.max(-1.55, Math.min(1.55, pitch - e.movementY * 0.004)); } });
   canvas.addEventListener('wheel', e => { speed = Math.max(10, Math.min(2000, speed * (e.deltaY < 0 ? 1.2 : 1 / 1.2))); e.preventDefault(); }, { passive: false });
-  let tour = false, tourT = 0;
+  let tour = false, tourT = 0, driving = false;
   document.getElementById('tour').onclick = () => { tour = !tour; tourT = 0; };
   const WP = [[400, 420, -500], [1500, 160, -900], [2300, 90, -1900], [1500, 80, -2700], [600, 220, -3600], [1500, 700, -2000], [1500, 160, -2400]];
   function tourStep(dt) {
@@ -158,12 +159,13 @@ canvas{display:block;width:100%;height:100%}
   let last = performance.now(), lodT = 0, hudT = 0;
   function frame(now) {
     const last0 = now - last, dt = Math.min(0.1, last0 / 1000); last = now; S.ft = S.ft * 0.9 + last0 * 0.1;
-    if (tour) tourStep(dt); else {
+    if (window.__v && window.__v.hook) window.__v.hook(dt, now);
+    if (driving) { /* Fahrmodus steuert die Kamera */ } else if (tour) tourStep(dt); else {
       const f = (keys.KeyW || keys.ArrowUp ? 1 : 0) - (keys.KeyS || keys.ArrowDown ? 1 : 0), s = (keys.KeyD || keys.ArrowRight ? 1 : 0) - (keys.KeyA || keys.ArrowLeft ? 1 : 0), u = (keys.KeyE ? 1 : 0) - (keys.KeyQ ? 1 : 0);
       const v = speed * (keys.ShiftLeft || keys.ShiftRight ? 4 : 1) * dt;
       if (f || s || u) { cam.position.x += (-Math.sin(yaw) * Math.cos(pitch) * f + Math.cos(yaw) * s) * v; cam.position.y += (Math.sin(pitch) * f + u) * v; cam.position.z += (-Math.cos(yaw) * Math.cos(pitch) * f - Math.sin(yaw) * s) * v; }
     }
-    setDir();
+    if (!driving) setDir();
     if (now - lodT > 120) { lodT = now; updateLOD(); }
     renderer.render(scene, cam); S.frames++;
     if (S.firstTile !== null && S.firstFrame === null) S.firstFrame = performance.now() - S.t0;
@@ -187,8 +189,10 @@ canvas{display:block;width:100%;height:100%}
   window.__v = {
     stats, setCam(x, y, z, yw, pt) { cam.position.set(x, y, z); yaw = yw; pitch = pt; setDir(); updateLOD(); },
     settled() { return S.inflight === 0 && queue.length === 0 && [...tiles.values()].every(t => t.loading === -2); },
-    updateLOD, M,
+    updateLOD, M, hook: null,
+    core: { THREE, scene, cam, renderer, sun, hemi, matB, matT, matC, BASE, setDrive(b) { driving = b; }, get driving() { return driving; } },
   };
   window.__ready = true; requestAnimationFrame(frame);
 })().catch(e => { document.getElementById('hud').textContent = 'Fehler: ' + e.message; console.error(e); });
-</script></body></html>
+</script>
+<script src="game.js"></script></body></html>
