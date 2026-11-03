@@ -9,7 +9,7 @@ canvas{display:block;width:100%;height:100%}
 #help button{font:inherit;margin-left:6px;cursor:pointer}
 </style></head><body>
 <canvas id="c"></canvas><div id="hud">lade …</div>
-<div id="help">Ziehen = umsehen · W A S D = fliegen · Q/E = hoch/runter · Umschalt = schnell · Mausrad = Tempo <button id="tour">Rundflug</button><button id="gobtn">Fahren (Rettungswagen)</button><br>Daten: LoD2 + DGM1 NRW, Datenlizenz Deutschland – Zero – Version 2.0 (laut Datensatz)</div>
+<div id="help">Ziehen = umsehen · W A S D = fliegen · Q/E = hoch/runter · Umschalt = schnell · Mausrad = Tempo <button id="tour">Rundflug</button><button id="gobtn">Fahren (Rettungswagen)</button><button id="drvbtn">Driver: Fluchtfahrt</button><br>Daten: LoD2 + DGM1 NRW, Datenlizenz Deutschland – Zero – Version 2.0 (laut Datensatz)</div>
 <script src="three.min.js"></script>
 <script src="GLTFLoader.js"></script>
 <script>
@@ -108,16 +108,16 @@ canvas{display:block;width:100%;height:100%}
   function buildingMat(tex, cx, cz) {
     const m = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.92, metalness: 0, flatShading: true, side: THREE.DoubleSide }); m.userData.own = true; m.userData.shared = true;
     m.onBeforeCompile = sh => {
-      sh.uniforms.uTex = { value: tex || WHITE }; sh.uniforms.uO = { value: new THREE.Vector2(cx * CS, cz * CS) }; sh.uniforms.uHas = { value: tex ? 1 : 0 }; sh.uniforms.uWin = { value: WINDOWS ? 1 : 0 };
+      sh.uniforms.uTex = { value: tex || WHITE }; sh.uniforms.uO = { value: new THREE.Vector2(cx * CS, cz * CS) }; sh.uniforms.uHas = { value: tex ? 1 : 0 }; sh.uniforms.uWin = { value: WINDOWS ? 1 : 0 }; sh.uniforms.uGain = { value: TEXGAIN };
       sh.vertexShader = sh.vertexShader.replace('#include <common>', '#include <common>\nvarying vec3 vWP;').replace('#include <begin_vertex>', '#include <begin_vertex>\nvWP = position;');
-      sh.fragmentShader = sh.fragmentShader.replace('#include <common>', '#include <common>\nvarying vec3 vWP; uniform sampler2D uTex; uniform vec2 uO; uniform float uHas; uniform float uWin;')
+      sh.fragmentShader = sh.fragmentShader.replace('#include <common>', '#include <common>\nvarying vec3 vWP; uniform sampler2D uTex; uniform vec2 uO; uniform float uHas; uniform float uWin; uniform float uGain;')
         .replace('#include <normal_fragment_maps>', `#include <normal_fragment_maps>
         vec3 wn = inverseTransformDirection(normal, viewMatrix);
         float roofK = smoothstep(0.35, 0.65, abs(wn.y));
         vec2 puv = vec2((vWP.x - uO.x) / 512.0, (-vWP.z - uO.y) / 512.0);
         vec3 photo = texture2D(uTex, clamp(puv, 0.002, 0.998)).rgb;
-        vec3 roofC = mix(vec3(0.46, 0.40, 0.37), photo * 0.92, uHas);
-        vec3 wallC = vec3(0.80, 0.76, 0.69);
+        vec3 roofC = mix(vec3(0.46, 0.40, 0.37) * 0.8, photo * 0.92 * uGain, uHas);
+        vec3 wallC = vec3(0.80, 0.76, 0.69) * 0.84;
         vec2 tg = normalize(vec2(-wn.z, wn.x) + vec2(1e-4));
         vec2 cc = vec2(dot(vWP.xz - uO, tg) / 3.2, vWP.y / 3.0); vec2 f = fract(cc); vec2 fw = clamp(fwidth(cc), 0.0005, 0.25);
         float win = smoothstep(0.22, 0.22 + fw.x, f.x) * (1.0 - smoothstep(0.78 - fw.x, 0.78, f.x)) * smoothstep(0.30, 0.30 + fw.y, f.y) * (1.0 - smoothstep(0.80 - fw.y, 0.80, f.y));
@@ -138,7 +138,7 @@ canvas{display:block;width:100%;height:100%}
     let mat = buildingMat(tex, cx, cz); if (DEBUG) { mat = matCache['b' + L] = matCache['b' + L] || new THREE.MeshStandardMaterial({ color: new THREE.Color(0.68 * TINT[L][0], 0.66 * TINT[L][1], 0.62 * TINT[L][2]), roughness: .92, flatShading: true, side: THREE.DoubleSide }); }
     return { mesh: new THREE.Mesh(g, mat), tris: nt };
   }
-  const TEXGAIN = +(q.get('gain') || 1.0), USETEX = q.get('tex') !== '0', WINDOWS = q.get('win') !== '0', maxAniso = Math.min(8, renderer.capabilities.getMaxAnisotropy());
+  const TEXGAIN = +(q.get('gain') || 0.72), USETEX = q.get('tex') !== '0', WINDOWS = q.get('win') !== '0', maxAniso = Math.min(8, renderer.capabilities.getMaxAnisotropy());
   async function getTex(L, cx, cz) {
     if (!USETEX) return null;
     try {
@@ -148,12 +148,115 @@ canvas{display:block;width:100%;height:100%}
       const t = new THREE.Texture(img); t.anisotropy = maxAniso; t.generateMipmaps = true; t.minFilter = THREE.LinearMipmapLinearFilter; t.magFilter = THREE.LinearFilter; t.needsUpdate = true; return t;
     } catch (e) { return null; }
   }
+  /* ---------- Straßen und Wasser (Basis-DLM NRW, tiles/roads.json) ----------
+     Die Straßenbänder werden beim Laden einer Kachel (L0/L1) aus den Linienzügen gebaut und auf das Gelände dieser Kachel gelegt
+     (Höhe aus derselben Höhenkarte und derselben Dreiecksaufteilung wie das Geländenetz), die Farbe folgt dem Luftbild (Schatten bleiben). */
+  const USEROADS = q.get('roads') !== '0', ROADS = { data: null, cell: new Map(), deg: null };
+  const WATER = { u: null, mesh: null };
+  function planeFn(hq, n, res, x0, z0) {
+    const H = (i, j) => HMIN + hq[i * n + j] / HSC;
+    return (x, z) => {
+      const fj = Math.min(n - 1.0001, Math.max(0, (x - x0) / res)), fi = Math.min(n - 1.0001, Math.max(0, (z0 - z) / res));
+      const j = fj | 0, i = fi | 0, u = fj - j, v = fi - i, a = H(i, j), b = H(i, j + 1), c = H(i + 1, j), d = H(i + 1, j + 1);
+      return u + v <= 1 ? a + u * (b - a) + v * (c - a) : d + (1 - u) * (c - d) + (1 - v) * (b - d);
+    };
+  }
+  function buildWater(d) {
+    if (!d.water || !d.water.length) return;
+    const pos = [], idx = [], nor = []; let base = 0;
+    for (const w of d.water) { for (let i = 0; i < w.p.length; i += 2) { pos.push(w.p[i], w.y + 0.12, w.p[i + 1]); nor.push(0, 1, 0); } for (const t of w.i) idx.push(base + t); base += w.p.length / 2; }
+    const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); g.setAttribute('normal', new THREE.Float32BufferAttribute(nor, 3)); g.setIndex(idx); g.computeBoundingSphere();
+    const m = new THREE.MeshPhongMaterial({ color: 0x16404a, specular: 0xc8d6dc, shininess: 140, side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 });
+    WATER.u = { uTime: { value: 0 }, uSky: { value: scene.background } };
+    m.onBeforeCompile = sh => {
+      Object.assign(sh.uniforms, WATER.u);
+      sh.vertexShader = sh.vertexShader.replace('#include <common>', '#include <common>\nvarying vec3 vWP;').replace('#include <begin_vertex>', '#include <begin_vertex>\nvWP = position;');
+      sh.fragmentShader = sh.fragmentShader.replace('#include <common>', '#include <common>\nvarying vec3 vWP; uniform float uTime; uniform vec3 uSky;')
+        .replace('#include <normal_fragment_maps>', `#include <normal_fragment_maps>
+        vec3 wp = vWP; float tt = uTime;
+        vec2 gr = vec2(sin(wp.x * 0.33 + tt * 1.1) + 0.7 * sin(wp.z * 0.51 - tt * 0.8) + 0.4 * sin((wp.x + wp.z) * 0.93 + tt * 1.7) + 0.25 * sin((wp.x - 2.0 * wp.z) * 2.3 + tt * 2.6),
+                       cos(wp.z * 0.41 + tt * 0.9) + 0.7 * cos(wp.x * 0.57 - tt * 1.3) + 0.4 * cos((wp.x - wp.z) * 1.1 - tt * 1.5) + 0.25 * cos((2.0 * wp.x + wp.z) * 2.1 - tt * 2.2));
+        gr *= 1.0 - smoothstep(80.0, 600.0, length(cameraPosition - wp));   // Wellen mit Abstand ausblenden (sonst Rastermuster)
+        vec3 wnr = normalize(vec3(-gr.x * 0.03, 1.0, -gr.y * 0.03));
+        normal = normalize((viewMatrix * vec4(wnr, 0.0)).xyz);`)
+        .replace('#include <fog_fragment>', `float fres = pow(1.0 - clamp(dot(normalize(cameraPosition - vWP), wnr), 0.0, 1.0), 3.0);
+        gl_FragColor.rgb = mix(gl_FragColor.rgb, uSky, clamp(0.10 + fres * 0.8, 0.0, 0.85));
+        #include <fog_fragment>`);
+    };
+    const mesh = new THREE.Mesh(g, m); mesh.frustumCulled = false; scene.add(mesh); WATER.mesh = mesh;
+  }
+  ROADS.ready = fetch(BASE + 'roads.json').then(r => r.ok ? r.json() : null).catch(() => null).then(d => {
+    if (!d) return null; ROADS.data = d;
+    const deg = new Uint8Array(d.nodes.length / 2); d.edges.forEach(e => { deg[e.a]++; deg[e.b]++; }); ROADS.deg = deg;
+    d.edges.forEach((e, k) => {
+      let x0 = 1e9, x1 = -1e9, z0 = 1e9, z1 = -1e9; const p = e.p; e.cum = [0];
+      for (let i = 0; i < p.length; i += 2) { x0 = Math.min(x0, p[i]); x1 = Math.max(x1, p[i]); z0 = Math.min(z0, p[i + 1]); z1 = Math.max(z1, p[i + 1]); if (i) e.cum.push(e.cum[e.cum.length - 1] + Math.hypot(p[i] - p[i - 2], p[i + 1] - p[i - 1])); }
+      e.len = e.cum[e.cum.length - 1]; const m = e.w * 0.5 + 8;
+      for (let cx = Math.floor((x0 - m) / CS); cx <= Math.floor((x1 + m) / CS); cx++) for (let cz = Math.floor((-z1 - m) / CS); cz <= Math.floor((-z0 + m) / CS); cz++) { const kk = key(cx, cz); (ROADS.cell.get(kk) || ROADS.cell.set(kk, []).get(kk)).push(k); }
+    });
+    buildWater(d); return d;
+  });
+  const roadMats = [];
+  function roadMat(tex, cx, cz) {
+    const m = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.93, metalness: 0, side: THREE.DoubleSide, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -4 }); m.userData.own = true;
+    m.onBeforeCompile = sh => {
+      sh.uniforms.uTex = { value: tex || WHITE }; sh.uniforms.uHas = { value: tex ? 1 : 0 }; sh.uniforms.uGain = { value: TEXGAIN }; sh.uniforms.uO = { value: new THREE.Vector2(cx * CS, -cz * CS) };
+      sh.vertexShader = sh.vertexShader.replace('#include <common>', '#include <common>\nvarying vec2 vRUv; uniform vec2 uO;').replace('#include <begin_vertex>', '#include <begin_vertex>\nvRUv = vec2((position.x - uO.x) / 512.0, (uO.y - position.z) / 512.0);');
+      sh.fragmentShader = sh.fragmentShader.replace('#include <common>', '#include <common>\nvarying vec2 vRUv; uniform sampler2D uTex; uniform float uHas; uniform float uGain;')
+        .replace('#include <color_fragment>', `#include <color_fragment>
+        float rl = dot(texture2D(uTex, clamp(vRUv, 0.002, 0.998), 2.5).rgb, vec3(0.299, 0.587, 0.114));
+        float kk = clamp(rl * uGain / 0.27, 0.3, 1.4); float isL = step(0.6, vColor.r);
+        diffuseColor.rgb *= mix(1.0, mix(kk, 0.55 + 0.45 * kk, isL), uHas);`);
+    };
+    return m;
+  }
+  function roadMesh(L, cx, cz, hb, tex) {
+    const D = ROADS.data, list = USEROADS && D && ROADS.cell.get(key(cx, cz)); if (!list) return null;
+    const info = M.levels[L], n = info.n, res = info.res, x0 = cx * CS, z0 = -cz * CS, Y = planeFn(new Uint16Array(hb, 0, n * n), n, res, x0, z0);
+    const step = Math.max(2, res * 0.5), mar = step + 0.5, X0 = x0 - mar, X1 = x0 + CS + mar, Z0 = z0 - CS - mar, Z1 = z0 + mar;
+    const pos = [], col = [], nor = [], ind = [], ASP = [0.27, 0.27, 0.28], LINE = [0.86, 0.86, 0.82];
+    const vtx = (x, z, lift, c) => { const k = pos.length / 3, e = 1.0, hx = Y(x + e, z) - Y(x - e, z), hz = Y(x, z + e) - Y(x, z - e), l = Math.hypot(hx, 2 * e, hz);
+      pos.push(x, Y(x, z) + lift, z); col.push(c[0], c[1], c[2]); nor.push(-hx / l, 2 * e / l, -hz / l); return k; };
+    for (const ei of list) {
+      const e = D.edges[ei]; if (e.f & 6) continue; const p = e.p, hw = e.w * 0.5, np = p.length / 2;
+      // Abtastpunkte entlang des Linienzugs (Knickpunkte bleiben erhalten)
+      const sx = [], sz = [], ss = [];
+      for (let i = 0; i < np - 1; i++) { const ax = p[2 * i], az = p[2 * i + 1], bx = p[2 * i + 2], bz = p[2 * i + 3], l = e.cum[i + 1] - e.cum[i], m = Math.max(1, Math.ceil(l / step));
+        for (let k = 0; k < m; k++) { const t = k / m; sx.push(ax + (bx - ax) * t); sz.push(az + (bz - az) * t); ss.push(e.cum[i] + l * t); } }
+      sx.push(p[2 * np - 2]); sz.push(p[2 * np - 1]); ss.push(e.len);
+      const ns = sx.length, inC = k => sx[k] >= X0 && sx[k] <= X1 && sz[k] >= Z0 && sz[k] <= Z1; let run = null;
+      const flush = () => { run = null; };
+      for (let k = 0; k < ns; k++) {
+        if (!inC(k)) { flush(); continue; }
+        const k0 = Math.max(0, k - 1), k1 = Math.min(ns - 1, k + 1); let tx = sx[k1] - sx[k0], tz = sz[k1] - sz[k0]; const tl = Math.hypot(tx, tz) || 1; tx /= tl; tz /= tl;
+        const a = vtx(sx[k] + tz * hw, sz[k] - tx * hw, 0.10, ASP), b = vtx(sx[k] - tz * hw, sz[k] + tx * hw, 0.10, ASP);
+        if (run) { ind.push(run[0], run[1], a, run[1], b, a); } run = [a, b];
+      }
+      // Mittellinie (gestrichelt) auf zweispurigen Straßen ab 6 m Breite, nicht im Kreuzungsbereich
+      if (e.w >= 6 && e.n !== 1 && e.len > 14) {
+        const sa = ROADS.deg[e.a] >= 3 ? hw + 5 : 2, sb = e.len - (ROADS.deg[e.b] >= 3 ? hw + 5 : 2);
+        const at = s => { let i = 0; while (i < e.cum.length - 2 && e.cum[i + 1] < s) i++; const l = e.cum[i + 1] - e.cum[i], t = l > 0 ? (s - e.cum[i]) / l : 0; return [p[2 * i] + (p[2 * i + 2] - p[2 * i]) * t, p[2 * i + 1] + (p[2 * i + 3] - p[2 * i + 1]) * t]; };
+        for (let s0 = sa; s0 + 3 <= sb; s0 += 9) {
+          const A = at(s0), B = at(s0 + 3), C = at(s0 + 1.5); if (A[0] < x0 || A[0] >= x0 + CS || A[1] > z0 || A[1] <= z0 - CS) continue;
+          let dx = B[0] - A[0], dz = B[1] - A[1]; const dl = Math.hypot(dx, dz) || 1; dx /= dl; dz /= dl; const w2 = 0.09;
+          const v0 = vtx(A[0] + dz * w2, A[1] - dx * w2, 0.15, LINE), v1 = vtx(A[0] - dz * w2, A[1] + dx * w2, 0.15, LINE), v2 = vtx(C[0] + dz * w2, C[1] - dx * w2, 0.15, LINE), v3 = vtx(C[0] - dz * w2, C[1] + dx * w2, 0.15, LINE),
+            v4 = vtx(B[0] + dz * w2, B[1] - dx * w2, 0.15, LINE), v5 = vtx(B[0] - dz * w2, B[1] + dx * w2, 0.15, LINE);
+          ind.push(v0, v2, v1, v2, v3, v1, v2, v4, v3, v4, v5, v3);
+        }
+      }
+    }
+    if (!ind.length) return null;
+    const g = new THREE.BufferGeometry(); g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3)); g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3)); g.setAttribute('normal', new THREE.Float32BufferAttribute(nor, 3));
+    g.setIndex(pos.length / 3 > 65000 ? new THREE.Uint32BufferAttribute(ind, 1) : new THREE.Uint16BufferAttribute(ind, 1)); g.computeBoundingSphere();
+    return { mesh: new THREE.Mesh(g, roadMat(tex, cx, cz)), tris: ind.length / 3 };
+  }
   async function loadLevel(cx, cz, L) {
     const grp = new THREE.Group(); let tris = 0, ent = M.tiles[key(cx, cz)] || {};
     const jobs = [get('h' + L + '_' + cx + '_' + cz + '.bin'), getTex(L, cx, cz)];
     const hasB = L <= 1 && ent['b' + L]; if (hasB) jobs.push(get('b' + L + '_' + cx + '_' + cz + '.bin'));
     const [hb, tex, bb] = await Promise.all(jobs);
     const h = heightMesh(L, cx, cz, hb, tex); grp.add(h.mesh); tris += h.tris;
+    if (L <= 1) { await ROADS.ready; const r = roadMesh(L, cx, cz, hb, tex); if (r) { grp.add(r.mesh); tris += r.tris; } }
     if (bb) { const b = buildingMesh(L, bb, tex, cx, cz); grp.add(b.mesh); tris += b.tris; }
     return { grp, tris };
   }
@@ -215,6 +318,7 @@ canvas{display:block;width:100%;height:100%}
   function frame(now) {
     const last0 = now - last, dt = Math.min(0.1, last0 / 1000); last = now; S.ft = S.ft * 0.9 + last0 * 0.1;
     if (window.__v && window.__v.hook) window.__v.hook(dt, now);
+    if (WATER.u) WATER.u.uTime.value = now / 1000;
     if (driving) { /* Fahrmodus steuert die Kamera */ } else if (tour) tourStep(dt); else {
       const f = (keys.KeyW || keys.ArrowUp ? 1 : 0) - (keys.KeyS || keys.ArrowDown ? 1 : 0), s = (keys.KeyD || keys.ArrowRight ? 1 : 0) - (keys.KeyA || keys.ArrowLeft ? 1 : 0), u = (keys.KeyE ? 1 : 0) - (keys.KeyQ ? 1 : 0);
       const v = speed * (keys.ShiftLeft || keys.ShiftRight ? 4 : 1) * dt;
@@ -245,7 +349,7 @@ canvas{display:block;width:100%;height:100%}
     stats, setCam(x, y, z, yw, pt) { cam.position.set(x, y, z); yaw = yw; pitch = pt; setDir(); updateLOD(); },
     settled() { return S.inflight === 0 && queue.length === 0 && [...tiles.values()].every(t => t.loading === -2); },
     updateLOD, M, hook: null,
-    core: { THREE, scene, cam, renderer, sun, hemi, matB, matT, matC, BASE, setDrive(b) { driving = b; }, get driving() { return driving; } },
+    core: { THREE, scene, cam, renderer, sun, hemi, matB, matT, matC, BASE, ROADS, setDrive(b) { driving = b; }, get driving() { return driving; } },
   };
   window.__ready = true; requestAnimationFrame(frame);
 })().catch(e => { document.getElementById('hud').textContent = 'Fehler: ' + e.message; console.error(e); });

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Erzeugt die Spieldaten aus den Kacheln:  python3 -I build_game_data.py tiles [start_x start_z hospital_x hospital_z]
+"""Erzeugt die Spieldaten aus den Kacheln:  python3 -I build_game_data.py tiles [start_x start_z hospital_x hospital_z [Name des Krankenhauses]]
 
   ground.bin   Höhenkarte 4 m, uint16 ((y+40)*1000), Zeilen nach Norden aufsteigend (wie h0-Kacheln, ganzes Gebiet)
   col.bin      Belegung 2 m (1 = Gebäude), 1 Bit je Zelle, LSB zuerst, Zeile i = -z/2, Spalte j = x/2
@@ -32,14 +32,14 @@ def near_main(x, z, maxr=400):
 old = {}
 try: old = json.load(open(D + '/mission.json'))
 except Exception: pass
-a = [float(v) for v in sys.argv[2:6]]
+a = [float(v) for v in sys.argv[2:6]]; hname = ' '.join(sys.argv[6:]) if len(sys.argv) > 6 else None
 sx, sz = near_main(*(a[0:2] if len(a) >= 2 else (old.get('start', {}).get('x', 1502.0), old.get('start', {}).get('z', -2400.0))))
 hx, hz = near_main(*(a[2:4] if len(a) >= 4 else (old.get('hospital', {}).get('x', 446.0), old.get('hospital', {}).get('z', -1490.0))))
 poi = {'Schlanke Mathilde (Uhr, Hörde)': {'x': 3714.0, 'z': -552.0, 'lat': 51.4888574, 'lon': 7.5006916},
        'Hörder Burgplatz (Phoenix-See)': {'x': 4101.0, 'z': -861.0, 'lat': 51.491707, 'lon': 7.506175}}
 for o in poi.values(): o['y'] = round(float(H[int(round(-o['z'] / 4)), int(round(o['x'] / 4))]), 2)
 mj = {'start': {'x': sx, 'z': sz, 'heading': float(old.get('start', {}).get('heading', 0.0))},
-      'hospital': {'x': hx, 'z': hz, 'name': old.get('hospital', {}).get('name', 'Krankenhaus (Platzhalter, bitte echte Koordinaten eintragen)')},
+      'hospital': {'x': hx, 'z': hz, 'name': hname or old.get('hospital', {}).get('name', 'Krankenhaus (Platzhalter, bitte echte Koordinaten eintragen)')},
       'row_bytes': rb, 'w': w, 'h': h, 'gw': GW, 'gh': GH, 'orte': poi if GW > 769 else {}}
 json.dump(mj, open(D + '/mission.json', 'w'), ensure_ascii=False)
 print('mission.json:', {k: mj[k] for k in ('start', 'hospital', 'w', 'h', 'gw', 'gh')})
