@@ -68,3 +68,38 @@ Punkte = 300 + Zeitbonus (bis 120 s × 5) + 400 bei „Abgeschüttelt“ + Zusta
 - Streifenwagen fahren der Straßen-Mittellinie nach und prüfen auf der Route nicht gegen Gebäude (sie bleiben dadurch nicht an Ecken hängen); durch Anstoßen können sie einzeln kurz neben der Straße stehen. Hängen sie über 4 s fest, erscheinen sie neu.
 - Das Krankenhausziel ist ein Straßenpunkt am St.-Josefs-Hospital-Komplex, kein Eingang.
 - Es gibt keinen Zwischenspeicher: Wechselt eine Kachel die Stufe, wird sie neu geladen.
+
+## Foto-Mesh-Schicht (neu): echte Stadt aus Luftbildern, ultraleicht
+
+Das Land NRW stellt ein fotogrammetrisches 3D-Mesh der Städte offen bereit (Geobasis NRW, "3D-Mesh", Datenlizenz Deutschland – Zero – Version 2.0, laut Nutzerinformation 08/2025; vor einem Verkauf bitte noch einmal selbst prüfen). Es sieht aus wie Google Earth in 3D: echte Straßen mit Markierungen, Dächer, Bäume, geparkte Autos. Das Original ist aber riesig (300 × 300 m ≈ 31 MB). Diese Schicht macht daraus Kacheln, die man im Spiel nachladen kann.
+
+### Benutzen
+
+    index.html?mesh=city/,city3/                 Foto-Mesh einschalten (Hörde = city/, Innenstadt = city3/; Ordner mit manifest.json und *.msh)
+    index.html?mesh=city/&mhide=none      altes Gelände nicht ausblenden (zum Vergleichen)
+    index.html?mesh=city/&mhide=all       nur das Mesh zeigen, nichts vom alten Gelände
+    ...&msse=3                            Bildschirmfehler in Pixeln, kleiner = schärfer, größer = schneller
+    ...&mcache=500                        Kacheln im Speicher
+    ...&mgamma=0.82&msat=0.88             Schatten aufhellen / Blaustich mindern (1 und 1 = aus)
+    ...&mnear=320                         Fahrmodus: Radius um das Auto, in dem das alte, saubere Gelände bleibt (0 = Mesh überall)
+
+Das Spiel (Fahrmodus, Rettungswagen) läuft unverändert weiter: Kollision, Straßennetz und Polizei benutzen weiter LoD2 und Basis-DLM. Das Mesh ist nur die Optik.
+
+### Wie es leicht bleibt
+
+- Das Mesh liegt als Baum aus Stufen vor (Tiefe 16 grob bis 19 fein). Der Viewer zeigt nur so viel Detail, wie der Abstand verlangt, und holt nur Kacheln im Blickfeld. Ein Knoten wird erst durch seine Kinder ersetzt, wenn alle sichtbaren Kinder da sind (kein Loch, kein Aufblitzen).
+- Umwandlung (`tools/fetch_mesh2.py`): Netz mit dem meshoptimizer (GitHub, zeux) auf etwa 15–25 % der Dreiecke vereinfacht (Fehlergrenze in Metern je Stufe), Eckpunkte als 16 Bit, Deflate mit Delta-Kodierung, Texturen als AVIF (rund 30 % kleiner als WebP). Eine Datei je Kachel.
+- Beispiel Hörde, 300 × 300 m: 31 MB → 2,3 MB (feinste Stufe, 40 cm je Pixel).
+
+### Grenzen (ehrlich)
+
+- Das Mesh entsteht nur aus Luftbildern von oben: Fassaden sind verschmiert und unscharf, in schmalen Straßen liegen blaue Schlagschatten fest im Bild. Auf Fahrhöhe sieht man das.
+- Autos, Bäume und Menschen sind ins Mesh eingebacken (geparkte Autos fahren nicht weg, Schatten bewegen sich nicht mit der Tageszeit).
+- Die Höhe des Meshes weicht vom alten Gelände um bis zu etwa 0,3 m ab; das Auto fährt auf dem alten Gelände.
+- Im Dunkeln wird das Mesh nur abgedunkelt (kein echtes Licht, keine Laternen).
+
+Umwandlung selbst:
+
+    python3 -I tools/fetch_mesh2.py index.pkl nodes.pkl depth.pkl ausgabe E0 N0 E1 N1 19:0.8:2:40 18:1.6:4:40 17:3.2:4:40
+    # mehrere Gebiete: BOXES='E0,N0,E1,N1;E0,N0,E1,N1' THREADS=24 ...
+    # Spezifikation je Stufe: Tiefe:Fehler_m:Textur-Teiler:Qualität
