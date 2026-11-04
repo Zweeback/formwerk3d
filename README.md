@@ -80,6 +80,24 @@ Vorführ-Szenen: `{"scene":"rtw"}` Rettungswagen · `{"scene":"city"}` Stadt aus
 
 Hinweis: In manchen Chat-Fenstern sind Downloads und Skripte gesperrt. Dann funktionieren die Kopieren-Knöpfe und die JSON-Befehle weiterhin.
 
+## Online ansehen (GitHub Pages)
+
+Einmalig einschalten: Repo → Settings → Pages → Source "Deploy from a branch" → Branch `main`, Ordner `/docs`. Danach läuft alles unter **https://zweeback.github.io/formwerk3d/**:
+
+- `/` Startseite mit Links
+- `/dortmund/index.html?mesh=city/,city3/` Foto-3D-Stadt (Hörde und Innenstadt), `&game&mode=driver` für die Fluchtfahrt
+- `/formwerk3d.html` der Editor
+
+Hinweis: Das Repo enthält außerdem ein älteres, getrenntes Projekt (`src/anticipator`, `tests/`, "Webhook Anticipator"). Es ist unverändert.
+
+## Chat-Fassung (Claude-Artefakt)
+
+`tools/dortmund/lite/` baut eine abgespeckte Fassung nur mit dem Foto-Mesh (Fliegen, Orte, Rundflug), die als Artefakt in einem Claude-Chat läuft:
+
+    python3 -I tools/dortmund/lite/build_lite.py docs/dortmund lite city:19,city3:18 1.5 1100
+
+Das schreibt `lite/index.json` und `lite/packs/pNN.txt` (Base64-Text, weil Artefakte keine rohen Binärdateien ausliefern; Kacheln auf 3-Byte-Grenzen, damit ein Bereichsabruf funktioniert). `lite.html` ist die Seite dazu. Die feinste Stufe liegt nur im Umkreis (hier 1,1 km) von Mathilde, Reinoldikirche und Hauptbahnhof, sonst wäre das Artefakt über dem 256-MB-Limit. Test lokal: `node test/pw_lite.js` (mit `NORANGE=1` ohne Bereichsabruf).
+
 ## Selbst bauen
 
 ```bash
