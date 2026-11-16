@@ -1,6 +1,6 @@
 <!doctype html>
 <html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Formwerk 3D · Dortmund</title>
+<title>Formwerk 3D · 3D-Editor und Dortmund in 3D</title>
 <style>
 :root{--bg:#f3f1ec;--fg:#1d2327;--mut:#5d676d;--card:#fff;--line:#d9d6cd;--acc:#b5381d}
 @media (prefers-color-scheme:dark){:root{--bg:#14181b;--fg:#e8ecee;--mut:#9aa6ac;--card:#1d2327;--line:#2c353a;--acc:#ff7a5c}}
@@ -17,18 +17,22 @@ a.card span{color:var(--mut);font-size:.92rem}
 h2{font-size:.78rem;text-transform:uppercase;letter-spacing:.09em;color:var(--mut);margin:28px 0 10px}
 small{display:block;color:var(--mut);margin-top:28px;font-size:.85rem}
 </style></head><body><main>
-<h1>Dortmund in 3D</h1>
-<p class="lead">Hörde und Innenstadt aus echten Luftbildern, im Browser. Die Stadt wird beim Fliegen und Fahren stückweise nachgeladen (zuerst grob, dann scharf).</p>
+<h1>Formwerk 3D</h1>
+<p class="lead">3D-Modelle direkt im Browser bearbeiten – ohne Installation oder Anmeldung. Werkzeuge für CAD, Mesh, Sculpt, Rigging, Kartenimport und Export. Eine Offline-Fassung ist ebenfalls vorhanden.</p>
+<h2>3D-Werkzeug</h2>
+<div class="grid">
+<a class="card" href="formwerk3d.html"><b>Editor direkt starten</b><span>Im Browser modellieren und 3D-Dateien importieren oder exportieren.</span></a>
+<a class="card" href="https://raw.githubusercontent.com/Zweeback/formwerk3d/main/dist/formwerk3d.offline.html"><b>Offline-Fassung (HTML, ca. 2,7 MB)</b><span>Die fertige HTML-Datei von GitHub laden, lokal speichern und ohne Netzwerk öffnen.</span></a>
+<a class="card" href="https://github.com/Zweeback/formwerk3d/issues/new"><b>Anpassung oder Funktionswunsch anfragen</b><span>Eine öffentliche Anfrage im GitHub-Projekt erstellen. Noch kein Bezahl- oder Bestellvorgang.</span></a>
+</div>
+<h2>Dortmund in 3D</h2>
+<p class="lead">Hörde und Innenstadt aus Luftbildern, im Browser. Die Stadt wird beim Fliegen und Fahren stückweise nachgeladen (zuerst grob, dann scharf).</p>
 <h2>Stadt</h2>
 <div class="grid">
 <a class="card" href="dortmund/index.html?mesh=city/,city3/"><b>Fliegen über Hörde und Innenstadt</b><span>Foto-Mesh, Tag/Nacht. Schlanke Mathilde, Hauptbahnhof, Reinoldikirche. Mobil: Touch-Steuerung.</span></a>
 <a class="card" href="dortmund/index.html?mesh=city/,city3/&game&mode=driver"><b>Fluchtfahrt (Fahrmodus)</b><span>Selbst fahren, mit Verkehr, Passanten und Polizei.</span></a>
 <a class="card" href="dortmund/index.html?mesh=city/,city3/&game"><b>Rettungswagen-Einsatz</b><span>Der Rettungswagen fährt zum Einsatzort.</span></a>
 <a class="card" href="dortmund/index.html"><b>Ohne Foto-Mesh</b><span>Nur die leichten Gebäude- und Geländekacheln (schnell auf schwachen Geräten).</span></a>
-</div>
-<h2>Werkzeug</h2>
-<div class="grid">
-<a class="card" href="formwerk3d.html"><b>Formwerk 3D</b><span>3D-Editor in einer HTML-Datei: Modellieren, Boolesche Operationen, Mesh, Export.</span></a>
 </div>
 <small>Quellen: Geobasis NRW (3D-Mesh, LoD2, Basis-DLM), Datenlizenz Deutschland – Zero – Version 2.0, bearbeitet. Quellcode: <a href="https://github.com/Zweeback/formwerk3d" style="color:inherit">github.com/Zweeback/formwerk3d</a>.</small>
 </main></body></html>
